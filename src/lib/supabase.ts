@@ -1,12 +1,16 @@
 import { createClient } from '@supabase/supabase-js';
 
-const url = import.meta.env.VITE_SUPABASE_URL as string;
-const key = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
+// Read Vite env vars (may be undefined during some CI/build environments)
+const url = (import.meta.env.VITE_SUPABASE_URL as string) || '';
+const key = (import.meta.env.VITE_SUPABASE_ANON_KEY as string) || '';
 
 if (!url || !key) {
-  throw new Error(
-    '❌ Supabase env vars missing.\n' +
-    'Copy .env.example → .env.local and fill in VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.'
+  // Avoid throwing during build so deployments without env vars don't fail the build step.
+  // Runtime calls to Supabase will still fail until proper env vars are provided.
+  // eslint-disable-next-line no-console
+  console.warn(
+    'Supabase env vars missing: VITE_SUPABASE_URL and/or VITE_SUPABASE_ANON_KEY.\n' +
+    'Set them in your environment (e.g., Vercel Environment Variables) for production.'
   );
 }
 
