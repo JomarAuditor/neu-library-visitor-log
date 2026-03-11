@@ -13,8 +13,7 @@
     "jsx": "react-jsx",
     "strict": false,
     "types": ["vite/client", "node"],
-    "baseUrl": ".",
-    "paths": { "@/*": ["src/*"] }
+    "paths": { "@/*": ["./src/*"] }  // ← use ./src/* not src/*
   },
   "include": ["src"],
   "references": [{ "path": "./tsconfig.node.json" }]
