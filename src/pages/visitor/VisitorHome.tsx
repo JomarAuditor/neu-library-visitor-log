@@ -8,7 +8,7 @@ import { supabase } from '@/lib/supabase';
 import { NEULogo } from '@/components/NEULogo';
 import { QRScanner } from '@/components/visitor/QRScanner';
 import { PURPOSES, VisitPurpose, PURPOSE_EMOJI } from '@/types';
-import { validateNEUEmail, decodeQR, calcDurationMinutes } from '@/lib/utils';
+import { validateNEUEmail, decodeQR, calcDurationMinutes, formatStudentNumberInput, validateStudentNumber } from '@/lib/utils';
 
 type Tab  = 'qr' | 'email';
 type Step = 'login' | 'purpose' | 'confirm-timeout';
@@ -105,6 +105,7 @@ export default function VisitorHome() {
     e.preventDefault(); setError('');
     if (!validateNEUEmail(email)) { setError('Please use your official @neu.edu.ph email.'); return; }
     if (!sn.trim()) { setError('Student number is required.'); return; }
+    if (!validateStudentNumber(sn)) { setError('Student number must be in the format XX-XXXXX-XXX (e.g. 24-13005-502).'); return; }
     setLoading(true);
     const res = await lookupStudent(email, sn);
     setLoading(false);
@@ -248,8 +249,9 @@ export default function VisitorHome() {
                     </div>
                     <div>
                       <label className="label">Student Number</label>
-                        <input inputMode="numeric" type="tel" pattern="[0-9]*" className="input" placeholder="e.g., 202312345"
-                          value={sn} onChange={e => setSN(e.target.value)} required />
+                        <input inputMode="numeric" type="tel" pattern="[0-9]*" className="input" placeholder="e.g., 24-13005-502"
+                          value={sn} onChange={e => setSN(formatStudentNumberInput(e.target.value))} required />
+                        <p className="text-[11px] text-slate-400 mt-1">Format: <span className="font-mono">24-13005-502</span></p>
                     </div>
                     <button type="submit" className="btn-primary w-full py-3.5" disabled={loading}>
                       {loading ? <><Loader2 size={16} className="animate-spin" />Verifying…</> : <><ChevronRight size={17} />Continue</>}

@@ -5,7 +5,7 @@ import { supabase } from '@/lib/supabase';
 import { NEULogo } from '@/components/NEULogo';
 import { QRCodeDisplay } from '@/components/visitor/QRCodeDisplay';
 import { COLLEGES, COURSES } from '@/types';
-import { validateNEUEmail, encodeQR } from '@/lib/utils';
+import { validateNEUEmail, encodeQR, formatStudentNumberInput, validateStudentNumber } from '@/lib/utils';
 
 type Step = 'form' | 'done';
 
@@ -24,6 +24,7 @@ export default function StudentRegister() {
     e.preventDefault(); setError('');
     if (!validateNEUEmail(form.email)) { setError('Please use your @neu.edu.ph email.'); return; }
     if (!form.name.trim() || !form.sn.trim() || !form.college || !form.course) { setError('Please fill all fields.'); return; }
+    if (!validateStudentNumber(form.sn)) { setError('Student number must be in the format XX-XXXXX-XXX (e.g. 24-13005-502).'); return; }
 
     setLoading(true);
     const qr = encodeQR(form.email, form.sn);
@@ -114,8 +115,11 @@ export default function StudentRegister() {
                   </div>
                   <div>
                     <label className="label">Student Number</label>
-                    <input inputMode="numeric" type="tel" pattern="[0-9]*" className="input" placeholder="e.g., 202312345"
-                      value={form.sn} onChange={e => set('sn', e.target.value)} required />
+                    <input inputMode="numeric" type="tel" pattern="[0-9]*" className="input" placeholder="e.g., 24-13005-502"
+                      value={form.sn}
+                      onChange={e => set('sn', formatStudentNumberInput(e.target.value))}
+                      required />
+                    <p className="text-[11px] text-slate-400 mt-1">Format: <span className="font-mono">24-13005-502</span></p>
                   </div>
                   <div>
                     <label className="label">College</label>

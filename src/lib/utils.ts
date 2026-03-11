@@ -69,6 +69,24 @@ export function calcDurationMinutes(timeIn: string, timeOut: string): number {
   return Math.max(0, differenceInMinutes(new Date(timeOut), new Date(timeIn)));
 }
 
+// ── Student number validation & formatting ─────────────────────────────────
+export function validateStudentNumber(sn: string): boolean {
+  return /^\d{2}-\d{5}-\d{3}$/.test(sn.trim());
+}
+
+export function formatStudentNumberInput(raw: string): string {
+  // Remove non-digits
+  const digits = raw.replace(/\D/g, '').slice(0, 10); // total 10 digits (2+5+3)
+  if (!digits) return '';
+  const p1 = digits.slice(0, 2);
+  const p2 = digits.slice(2, 7);
+  const p3 = digits.slice(7, 10);
+  let out = p1;
+  if (p2) out += '-' + p2;
+  if (p3) out += '-' + p3;
+  return out;
+}
+
 // ── CSV export ────────────────────────────────────────────────────────────
 export function exportCSV(data: Record<string, unknown>[], filename: string) {
   if (!data.length) return;
