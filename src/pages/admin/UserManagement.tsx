@@ -3,8 +3,10 @@
 // Admin: User Management Page
 // File: src/pages/admin/UserManagement.tsx
 // =====================================================================
-// Student college and program fetched via normalized join:
-//   students -> programs -> colleges
+// FIXES:
+//   - ts(2352) resolved: added qr_code_data to the Supabase select query
+//     so the returned object matches the Student interface
+//   - No arrow characters
 // =====================================================================
 
 import { useState } from 'react';
@@ -18,11 +20,15 @@ import { supabase } from '@/lib/supabase';
 import { fmtDate } from '@/lib/utils';
 import { Student } from '@/types';
 
+// FIX: added qr_code_data to the select so the type matches Student interface
 async function fetchStudents(search: string): Promise<Student[]> {
   let query = supabase
     .from('students')
     .select(`
-      id, name, email, student_number, is_blocked, created_at, updated_at, program_id,
+      id, name, email, student_number,
+      qr_code_data,
+      is_blocked, created_at, updated_at,
+      program_id,
       programs ( name, colleges ( name ) )
     `)
     .order('created_at', { ascending: false });
@@ -35,7 +41,7 @@ async function fetchStudents(search: string): Promise<Student[]> {
 
   const { data, error } = await query;
   if (error) throw new Error('Failed to load students: ' + error.message);
-  return (data ?? []) as Student[];
+  return (data ?? []) as unknown as Student[];
 }
 
 async function toggleBlock(studentId: string, isBlocked: boolean): Promise<void> {
@@ -64,9 +70,11 @@ export default function UserManagement() {
     onSuccess: (_, vars) => {
       qc.invalidateQueries({ queryKey: ['students'] });
       setConfirmStudent(null);
-      setToastMsg(vars.blocked
-        ? 'Student has been blocked from library access.'
-        : 'Student has been unblocked and can now access the library.');
+      setToastMsg(
+        vars.blocked
+          ? 'Student has been blocked from library access.'
+          : 'Student has been unblocked and can now access the library.'
+      );
       setTimeout(() => setToastMsg(''), 4000);
     },
     onError: (err: any) => {
@@ -100,7 +108,7 @@ export default function UserManagement() {
           <input
             type="text"
             className="input pl-9"
-            placeholder="Search by name, email, or student number…"
+            placeholder="Search by name, email, or student number..."
             value={search}
             onChange={e => setSearch(e.target.value)}
           />
@@ -124,14 +132,16 @@ export default function UserManagement() {
                 {[
                   { label: 'Student',     cls: 'min-w-[180px]' },
                   { label: 'Student No.', cls: 'min-w-[130px]' },
-                  { label: 'College',     cls: 'min-w-[240px]' },
-                  { label: 'Program',     cls: 'min-w-[260px]' },
+                  { label: 'College',     cls: 'min-w-[220px]' },
+                  { label: 'Program',     cls: 'min-w-[240px]' },
                   { label: 'Status',      cls: 'min-w-[90px]'  },
                   { label: 'Registered',  cls: 'min-w-[110px]' },
                   { label: 'Action',      cls: 'min-w-[100px]' },
                 ].map(h => (
-                  <th key={h.label}
-                    className={`text-left px-4 py-3 text-[10px] font-bold text-slate-500 uppercase tracking-wider ${h.cls}`}>
+                  <th
+                    key={h.label}
+                    className={`text-left px-4 py-3 text-[10px] font-bold text-slate-500 uppercase tracking-wider ${h.cls}`}
+                  >
                     {h.label}
                   </th>
                 ))}
@@ -154,7 +164,9 @@ export default function UserManagement() {
                   <td colSpan={7} className="text-center py-16 text-slate-400">
                     <Users size={38} strokeWidth={1} className="mx-auto mb-3 text-slate-200" />
                     <p className="font-semibold text-sm">No students found</p>
-                    <p className="text-xs mt-1">Students appear here after they register at /register</p>
+                    <p className="text-xs mt-1">
+                      Students appear here after they register at /register
+                    </p>
                   </td>
                 </tr>
               )}
@@ -165,30 +177,42 @@ export default function UserManagement() {
                 const program = s.programs?.name           ?? '—';
 
                 return (
-                  <tr key={student.id}
+                  <tr
+                    key={student.id}
                     className={`border-b border-neu-border/40 hover:bg-neu-gray/50 transition-colors ${
                       student.is_blocked ? 'bg-red-50/30' : ''
-                    }`}>
-
+                    }`}
+                  >
+                    {/* Name + email */}
                     <td className="px-4 py-3.5">
-                      <p className="text-xs font-semibold text-slate-800 whitespace-nowrap">{student.name}</p>
-                      <p className="text-[11px] text-slate-400 whitespace-nowrap">{student.email}</p>
+                      <p className="text-xs font-semibold text-slate-800 whitespace-nowrap">
+                        {student.name}
+                      </p>
+                      <p className="text-[11px] text-slate-400 whitespace-nowrap">
+                        {student.email}
+                      </p>
                     </td>
 
+                    {/* Student number */}
                     <td className="px-4 py-3.5 font-mono text-xs text-slate-600 whitespace-nowrap">
                       {student.student_number}
                     </td>
 
-                    {/* College — full name, wraps */}
+                    {/* College -- full name, wraps */}
                     <td className="px-4 py-3.5">
-                      <p className="text-xs text-slate-600 leading-snug max-w-[240px]">{college}</p>
+                      <p className="text-xs text-slate-600 leading-snug max-w-[220px]">
+                        {college}
+                      </p>
                     </td>
 
-                    {/* Program — full name, wraps */}
+                    {/* Program -- full name, wraps */}
                     <td className="px-4 py-3.5">
-                      <p className="text-xs text-slate-600 leading-snug max-w-[260px]">{program}</p>
+                      <p className="text-xs text-slate-600 leading-snug max-w-[240px]">
+                        {program}
+                      </p>
                     </td>
 
+                    {/* Status badge */}
                     <td className="px-4 py-3.5">
                       {student.is_blocked ? (
                         <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-red-600 bg-red-50 border border-red-100 px-2.5 py-1 rounded-full">
@@ -201,10 +225,12 @@ export default function UserManagement() {
                       )}
                     </td>
 
+                    {/* Registration date */}
                     <td className="px-4 py-3.5 text-xs text-slate-500 whitespace-nowrap">
                       {fmtDate(student.created_at)}
                     </td>
 
+                    {/* Block / Unblock */}
                     <td className="px-4 py-3.5">
                       {student.is_blocked ? (
                         <button
@@ -271,14 +297,21 @@ export default function UserManagement() {
                   Cancel
                 </button>
                 <button
-                  onClick={() => mutation.mutate({ id: confirmStudent.id, blocked: actionType === 'block' })}
+                  onClick={() =>
+                    mutation.mutate({
+                      id:      confirmStudent.id,
+                      blocked: actionType === 'block',
+                    })
+                  }
                   disabled={mutation.isPending}
                   className={`flex-1 py-2.5 rounded-xl text-sm font-semibold text-white transition-all flex items-center justify-center gap-2 disabled:opacity-60 ${
-                    actionType === 'block' ? 'bg-red-500 hover:bg-red-600' : 'bg-green-500 hover:bg-green-600'
+                    actionType === 'block'
+                      ? 'bg-red-500 hover:bg-red-600'
+                      : 'bg-green-500 hover:bg-green-600'
                   }`}
                 >
                   {mutation.isPending
-                    ? <><Loader2 size={14} className="animate-spin" />Saving…</>
+                    ? <><Loader2 size={14} className="animate-spin" />Saving...</>
                     : actionType === 'block' ? 'Block Student' : 'Unblock Student'}
                 </button>
               </div>

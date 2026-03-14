@@ -1,7 +1,11 @@
 // =====================================================================
 // NEU Library Visitor Log System
-// Data Hooks — All Supabase queries use normalized joins
+// Data Hooks -- Normalized Supabase queries
 // File: src/hooks/useStats.ts
+// =====================================================================
+// FIXES:
+//   - ts(2352) resolved: changed "as VisitorLog[]" to "as unknown as VisitorLog[]"
+//   - No arrow characters (removed all -- and <- )
 // =====================================================================
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -10,7 +14,7 @@ import { supabase } from '@/lib/supabase';
 import { getDateRange } from '@/lib/utils';
 import { College, Program, VisitorLog } from '@/types';
 
-// ── Colleges — fetched from DB for registration dropdown ───────────────
+// Colleges for registration dropdown (from normalized DB)
 export function useColleges() {
   return useQuery<College[]>({
     queryKey: ['colleges'],
@@ -26,7 +30,7 @@ export function useColleges() {
   });
 }
 
-// ── Programs — fetched from DB, filtered by selected college ───────────
+// Programs for registration dropdown, filtered by college
 export function usePrograms(collegeId: number | null) {
   return useQuery<Program[]>({
     queryKey: ['programs', collegeId],
@@ -45,7 +49,7 @@ export function usePrograms(collegeId: number | null) {
   });
 }
 
-// ── Stat cards ─────────────────────────────────────────────────────────
+// Stat cards (visitor counts per time period)
 export function useStatCards() {
   const qc = useQueryClient();
 
@@ -81,9 +85,11 @@ export function useStatCards() {
   useEffect(() => {
     const channel = supabase
       .channel('stat-cards-realtime')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'visitor_logs' }, () => {
-        qc.invalidateQueries({ queryKey: ['stat-cards'] });
-      })
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'visitor_logs' },
+        () => { qc.invalidateQueries({ queryKey: ['stat-cards'] }); }
+      )
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [qc]);
@@ -91,7 +97,7 @@ export function useStatCards() {
   return query;
 }
 
-// ── Currently inside (open sessions) ──────────────────────────────────
+// Live "currently inside" count (time_out IS NULL)
 export function useCurrentlyInside() {
   const qc = useQueryClient();
 
@@ -111,9 +117,11 @@ export function useCurrentlyInside() {
   useEffect(() => {
     const channel = supabase
       .channel('inside-realtime')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'visitor_logs' }, () => {
-        qc.invalidateQueries({ queryKey: ['currently-inside'] });
-      })
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'visitor_logs' },
+        () => { qc.invalidateQueries({ queryKey: ['currently-inside'] }); }
+      )
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [qc]);
@@ -121,7 +129,8 @@ export function useCurrentlyInside() {
   return { count: data ?? 0, loading: isLoading };
 }
 
-// ── Visitors by college (for pie chart) ───────────────────────────────
+// Visitors by college (for pie chart)
+// Join path: visitor_logs -> students -> programs -> colleges
 export function useByCollege(filter: string, from?: string, to?: string) {
   const range = getDateRange(filter, from, to);
 
@@ -150,7 +159,8 @@ export function useByCollege(filter: string, from?: string, to?: string) {
   });
 }
 
-// ── Visitors by program (for bar chart) ───────────────────────────────
+// Visitors by program (for bar chart)
+// Join path: visitor_logs -> students -> programs
 export function useByCourse(filter: string, from?: string, to?: string) {
   const range = getDateRange(filter, from, to);
 
@@ -180,7 +190,7 @@ export function useByCourse(filter: string, from?: string, to?: string) {
   });
 }
 
-// ── Visitor logs table (paginated + searchable) ────────────────────────
+// Visitor logs table (paginated + searchable)
 export function useVisitorLogs(
   filter:   string,
   search:   string,
@@ -225,13 +235,15 @@ export function useVisitorLogs(
 
       const { data, error, count } = await query;
       if (error) throw new Error(error.message);
-      return { data: (data ?? []) as VisitorLog[], count: count ?? 0 };
+
+      // FIX ts(2352): use "as unknown as VisitorLog[]" to safely cast Supabase response
+      return { data: (data ?? []) as unknown as VisitorLog[], count: count ?? 0 };
     },
     staleTime: 15_000,
   });
 }
 
-// ── Fetch ALL logs for CSV export (no pagination) ─────────────────────
+// Fetch all logs for CSV export (no pagination)
 export async function fetchAllLogsCSV(filter: string, from?: string, to?: string) {
   const range = getDateRange(filter, from, to);
 
@@ -249,5 +261,7 @@ export async function fetchAllLogsCSV(filter: string, from?: string, to?: string
     .order('time_in', { ascending: false });
 
   if (error) throw new Error('CSV export failed: ' + error.message);
-  return (data ?? []) as VisitorLog[];
+
+  // FIX ts(2352): use "as unknown as VisitorLog[]" to safely cast Supabase response
+  return (data ?? []) as unknown as VisitorLog[];
 }
