@@ -3,9 +3,9 @@
 // Admin: Visitor Logs Page
 // File: src/pages/admin/VisitorLogs.tsx
 // =====================================================================
-// College and Program read from normalized join:
-//   visitor_logs -> students -> programs -> colleges
-// Full text displayed — no truncation.
+// NOTE: AdminLayout wrapper has been REMOVED from this file.
+//       Layout is now handled by the nested route in App.tsx.
+//       This component only renders the page content.
 // =====================================================================
 
 import { useState, useCallback } from 'react';
@@ -13,7 +13,6 @@ import {
   Search, Download, ChevronLeft, ChevronRight,
   ClipboardList, QrCode, Mail, LogIn, LogOut, Timer,
 } from 'lucide-react';
-import { AdminLayout } from '@/components/layout/AdminLayout';
 import { PageHeader } from '@/components/layout/AdminSidebar';
 import { useVisitorLogs, fetchAllLogsCSV } from '@/hooks/useStats';
 import { exportCSV, fmtDate, fmtTime, fmtDuration } from '@/lib/utils';
@@ -87,13 +86,13 @@ export default function VisitorLogs() {
   };
 
   return (
-    <AdminLayout>
+    <>
       <PageHeader
         title="Visitor Logs"
         subtitle="Complete visit records with Time In, Time Out, and Duration"
       />
 
-      {/* Toolbar */}
+      {/* ── Toolbar ── */}
       <div className="card-p mb-5 animate-fade-up">
         <div className="flex flex-col lg:flex-row gap-3">
           <div className="relative flex-1">
@@ -101,7 +100,7 @@ export default function VisitorLogs() {
             <input
               type="text"
               className="input pl-9"
-              placeholder="Search name, email, student number…"
+              placeholder="Search name, email, student number..."
               value={search}
               onChange={e => onSearch(e.target.value)}
             />
@@ -119,7 +118,11 @@ export default function VisitorLogs() {
                       : 'text-slate-500 hover:text-neu-blue hover:bg-neu-light'
                   }`}
                 >
-                  {f === 'today' ? 'Today' : f === 'week' ? 'Week' : f === 'month' ? 'Month' : f === 'year' ? 'Year' : 'Custom'}
+                  {f === 'today'  ? 'Today'
+                   : f === 'week'  ? 'Week'
+                   : f === 'month' ? 'Month'
+                   : f === 'year'  ? 'Year'
+                   : 'Custom'}
                 </button>
               ))}
             </div>
@@ -128,7 +131,7 @@ export default function VisitorLogs() {
               <>
                 <input type="date" className="input text-xs py-2 px-3 w-36" value={cfrom}
                   onChange={e => { setCfrom(e.target.value); setPage(0); }} />
-                <span className="text-slate-400 text-xs font-medium">to</span>
+                <span className="text-slate-400 text-xs">to</span>
                 <input type="date" className="input text-xs py-2 px-3 w-36" value={cto}
                   onChange={e => { setCto(e.target.value); setPage(0); }} />
               </>
@@ -140,13 +143,13 @@ export default function VisitorLogs() {
               className="flex items-center gap-2 px-4 py-2 rounded-xl bg-neu-blue text-white text-xs font-semibold hover:bg-neu-mid transition-all disabled:opacity-60 shadow-card"
             >
               <Download size={13} />
-              {exporting ? 'Exporting…' : 'Export CSV'}
+              {exporting ? 'Exporting...' : 'Export CSV'}
             </button>
           </div>
         </div>
       </div>
 
-      {/* Table */}
+      {/* ── Table ── */}
       <div className="card animate-fade-up overflow-hidden">
         <div className="px-6 py-4 border-b border-neu-border flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -167,8 +170,8 @@ export default function VisitorLogs() {
               <tr className="bg-neu-gray border-b border-neu-border">
                 {[
                   { label: 'Student',  cls: 'min-w-[160px]' },
-                  { label: 'College',  cls: 'min-w-[240px]' },
-                  { label: 'Program',  cls: 'min-w-[260px]' },
+                  { label: 'College',  cls: 'min-w-[220px]' },
+                  { label: 'Program',  cls: 'min-w-[220px]' },
                   { label: 'Purpose',  cls: 'min-w-[110px]' },
                   { label: 'Method',   cls: 'min-w-[90px]'  },
                   { label: 'Date',     cls: 'min-w-[110px]' },
@@ -183,7 +186,6 @@ export default function VisitorLogs() {
                 ))}
               </tr>
             </thead>
-
             <tbody>
               {isLoading && [...Array(8)].map((_, i) => (
                 <tr key={i} className="border-b border-neu-border/50">
@@ -209,12 +211,9 @@ export default function VisitorLogs() {
                 const student = log.students as any;
                 const college = student?.programs?.colleges?.name ?? '—';
                 const program = student?.programs?.name           ?? '—';
-
                 return (
                   <tr key={log.id}
                     className="border-b border-neu-border/40 hover:bg-neu-gray/50 transition-colors">
-
-                    {/* Student */}
                     <td className="px-4 py-3.5">
                       <p className="text-xs font-semibold text-slate-800 whitespace-nowrap">
                         {student?.name ?? '—'}
@@ -223,29 +222,17 @@ export default function VisitorLogs() {
                         {student?.email ?? ''}
                       </p>
                     </td>
-
-                    {/* College — full name, wraps naturally */}
                     <td className="px-4 py-3.5">
-                      <p className="text-xs text-slate-600 leading-snug max-w-[240px]">
-                        {college}
-                      </p>
+                      <p className="text-xs text-slate-600 leading-snug">{college}</p>
                     </td>
-
-                    {/* Program — full name, wraps naturally */}
                     <td className="px-4 py-3.5">
-                      <p className="text-xs text-slate-600 leading-snug max-w-[260px]">
-                        {program}
-                      </p>
+                      <p className="text-xs text-slate-600 leading-snug">{program}</p>
                     </td>
-
-                    {/* Purpose */}
                     <td className="px-4 py-3.5">
                       <span className={PURPOSE_BADGE[log.purpose] ?? 'badge-gray'}>
                         {log.purpose}
                       </span>
                     </td>
-
-                    {/* Method */}
                     <td className="px-4 py-3.5">
                       <span className="badge-gray gap-1">
                         {log.login_method === 'QR Code'
@@ -253,20 +240,14 @@ export default function VisitorLogs() {
                           : <><Mail   size={10} />Email</>}
                       </span>
                     </td>
-
-                    {/* Date */}
                     <td className="px-4 py-3.5 text-xs text-slate-500 whitespace-nowrap">
                       {fmtDate(log.time_in)}
                     </td>
-
-                    {/* Time In */}
                     <td className="px-4 py-3.5">
                       <span className="badge-green gap-1 whitespace-nowrap">
                         <LogIn size={10} />{fmtTime(log.time_in)}
                       </span>
                     </td>
-
-                    {/* Time Out */}
                     <td className="px-4 py-3.5">
                       {log.time_out ? (
                         <span className="badge-amber gap-1 whitespace-nowrap">
@@ -279,8 +260,6 @@ export default function VisitorLogs() {
                         </span>
                       )}
                     </td>
-
-                    {/* Duration */}
                     <td className="px-4 py-3.5">
                       {log.duration_minutes != null ? (
                         <span className="badge-gray gap-1">
@@ -297,31 +276,24 @@ export default function VisitorLogs() {
           </table>
         </div>
 
-        {/* Pagination */}
         {pages > 1 && (
           <div className="px-6 py-4 border-t border-neu-border flex items-center justify-between">
             <p className="text-xs text-slate-400">
               Page {page + 1} of {pages} &middot; {total.toLocaleString()} total records
             </p>
             <div className="flex gap-2">
-              <button
-                onClick={() => setPage(p => Math.max(0, p - 1))}
-                disabled={page === 0}
-                className="p-2 rounded-lg border border-neu-border hover:bg-neu-light disabled:opacity-40 transition-all"
-              >
+              <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0}
+                className="p-2 rounded-lg border border-neu-border hover:bg-neu-light disabled:opacity-40 transition-all">
                 <ChevronLeft size={14} className="text-slate-600" />
               </button>
-              <button
-                onClick={() => setPage(p => Math.min(pages - 1, p + 1))}
-                disabled={page >= pages - 1}
-                className="p-2 rounded-lg border border-neu-border hover:bg-neu-light disabled:opacity-40 transition-all"
-              >
+              <button onClick={() => setPage(p => Math.min(pages - 1, p + 1))} disabled={page >= pages - 1}
+                className="p-2 rounded-lg border border-neu-border hover:bg-neu-light disabled:opacity-40 transition-all">
                 <ChevronRight size={14} className="text-slate-600" />
               </button>
             </div>
           </div>
         )}
       </div>
-    </AdminLayout>
+    </>
   );
 }

@@ -3,10 +3,9 @@
 // Admin: User Management Page
 // File: src/pages/admin/UserManagement.tsx
 // =====================================================================
-// FIXES:
-//   - ts(2352) resolved: added qr_code_data to the Supabase select query
-//     so the returned object matches the Student interface
-//   - No arrow characters
+// NOTE: AdminLayout wrapper has been REMOVED from this file.
+//       Layout is now handled by the nested route in App.tsx.
+//       This component only renders the page content.
 // =====================================================================
 
 import { useState } from 'react';
@@ -14,13 +13,11 @@ import {
   Search, Shield, ShieldOff, Users, CheckCircle2, Loader2, X,
 } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { AdminLayout } from '@/components/layout/AdminLayout';
 import { PageHeader } from '@/components/layout/AdminSidebar';
 import { supabase } from '@/lib/supabase';
 import { fmtDate } from '@/lib/utils';
 import { Student } from '@/types';
 
-// FIX: added qr_code_data to the select so the type matches Student interface
 async function fetchStudents(search: string): Promise<Student[]> {
   let query = supabase
     .from('students')
@@ -66,7 +63,8 @@ export default function UserManagement() {
   });
 
   const mutation = useMutation({
-    mutationFn: ({ id, blocked }: { id: string; blocked: boolean }) => toggleBlock(id, blocked),
+    mutationFn: ({ id, blocked }: { id: string; blocked: boolean }) =>
+      toggleBlock(id, blocked),
     onSuccess: (_, vars) => {
       qc.invalidateQueries({ queryKey: ['students'] });
       setConfirmStudent(null);
@@ -88,10 +86,13 @@ export default function UserManagement() {
   };
 
   return (
-    <AdminLayout>
-      <PageHeader title="User Management" subtitle="View and manage registered library students" />
+    <>
+      <PageHeader
+        title="User Management"
+        subtitle="View and manage registered library students"
+      />
 
-      {/* Toast */}
+      {/* Toast notification */}
       {toastMsg && (
         <div className="fixed top-5 right-5 z-50 animate-scale-in">
           <div className="bg-white border border-neu-border shadow-card-md rounded-2xl px-5 py-3.5 flex items-center gap-3 max-w-sm">
@@ -138,16 +139,13 @@ export default function UserManagement() {
                   { label: 'Registered',  cls: 'min-w-[110px]' },
                   { label: 'Action',      cls: 'min-w-[100px]' },
                 ].map(h => (
-                  <th
-                    key={h.label}
-                    className={`text-left px-4 py-3 text-[10px] font-bold text-slate-500 uppercase tracking-wider ${h.cls}`}
-                  >
+                  <th key={h.label}
+                    className={`text-left px-4 py-3 text-[10px] font-bold text-slate-500 uppercase tracking-wider ${h.cls}`}>
                     {h.label}
                   </th>
                 ))}
               </tr>
             </thead>
-
             <tbody>
               {isLoading && [...Array(6)].map((_, i) => (
                 <tr key={i} className="border-b border-neu-border/50">
@@ -175,15 +173,11 @@ export default function UserManagement() {
                 const s       = student as any;
                 const college = s.programs?.colleges?.name ?? '—';
                 const program = s.programs?.name           ?? '—';
-
                 return (
-                  <tr
-                    key={student.id}
+                  <tr key={student.id}
                     className={`border-b border-neu-border/40 hover:bg-neu-gray/50 transition-colors ${
                       student.is_blocked ? 'bg-red-50/30' : ''
-                    }`}
-                  >
-                    {/* Name + email */}
+                    }`}>
                     <td className="px-4 py-3.5">
                       <p className="text-xs font-semibold text-slate-800 whitespace-nowrap">
                         {student.name}
@@ -192,27 +186,19 @@ export default function UserManagement() {
                         {student.email}
                       </p>
                     </td>
-
-                    {/* Student number */}
                     <td className="px-4 py-3.5 font-mono text-xs text-slate-600 whitespace-nowrap">
                       {student.student_number}
                     </td>
-
-                    {/* College -- full name, wraps */}
                     <td className="px-4 py-3.5">
                       <p className="text-xs text-slate-600 leading-snug max-w-[220px]">
                         {college}
                       </p>
                     </td>
-
-                    {/* Program -- full name, wraps */}
                     <td className="px-4 py-3.5">
                       <p className="text-xs text-slate-600 leading-snug max-w-[240px]">
                         {program}
                       </p>
                     </td>
-
-                    {/* Status badge */}
                     <td className="px-4 py-3.5">
                       {student.is_blocked ? (
                         <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-red-600 bg-red-50 border border-red-100 px-2.5 py-1 rounded-full">
@@ -224,26 +210,18 @@ export default function UserManagement() {
                         </span>
                       )}
                     </td>
-
-                    {/* Registration date */}
                     <td className="px-4 py-3.5 text-xs text-slate-500 whitespace-nowrap">
                       {fmtDate(student.created_at)}
                     </td>
-
-                    {/* Block / Unblock */}
                     <td className="px-4 py-3.5">
                       {student.is_blocked ? (
-                        <button
-                          onClick={() => openConfirm(student, 'unblock')}
-                          className="text-xs font-semibold text-green-600 hover:text-green-700 hover:bg-green-50 px-3 py-1.5 rounded-lg border border-green-100 transition-all"
-                        >
+                        <button onClick={() => openConfirm(student, 'unblock')}
+                          className="text-xs font-semibold text-green-600 hover:bg-green-50 px-3 py-1.5 rounded-lg border border-green-100 transition-all">
                           Unblock
                         </button>
                       ) : (
-                        <button
-                          onClick={() => openConfirm(student, 'block')}
-                          className="text-xs font-semibold text-red-500 hover:text-red-600 hover:bg-red-50 px-3 py-1.5 rounded-lg border border-red-100 transition-all"
-                        >
+                        <button onClick={() => openConfirm(student, 'block')}
+                          className="text-xs font-semibold text-red-500 hover:bg-red-50 px-3 py-1.5 rounded-lg border border-red-100 transition-all">
                           Block
                         </button>
                       )}
@@ -269,14 +247,11 @@ export default function UserManagement() {
                     ? <ShieldOff size={20} className="text-red-500" />
                     : <Shield    size={20} className="text-green-600" />}
                 </div>
-                <button
-                  onClick={() => setConfirmStudent(null)}
-                  className="p-1.5 rounded-lg hover:bg-gray-100 text-slate-400"
-                >
+                <button onClick={() => setConfirmStudent(null)}
+                  className="p-1.5 rounded-lg hover:bg-gray-100 text-slate-400">
                   <X size={16} />
                 </button>
               </div>
-
               <h3 className="text-base font-bold text-slate-900 mb-1">
                 {actionType === 'block' ? 'Block Student?' : 'Unblock Student?'}
               </h3>
@@ -288,28 +263,19 @@ export default function UserManagement() {
                   ? 'This student will not be able to log any library visits until unblocked.'
                   : 'This student will be able to log library visits again.'}
               </p>
-
               <div className="flex gap-3">
-                <button
-                  onClick={() => setConfirmStudent(null)}
-                  className="flex-1 py-2.5 rounded-xl border border-neu-border text-sm font-semibold text-slate-600 hover:bg-neu-gray transition-all"
-                >
+                <button onClick={() => setConfirmStudent(null)}
+                  className="flex-1 py-2.5 rounded-xl border border-neu-border text-sm font-semibold text-slate-600 hover:bg-neu-gray transition-all">
                   Cancel
                 </button>
                 <button
-                  onClick={() =>
-                    mutation.mutate({
-                      id:      confirmStudent.id,
-                      blocked: actionType === 'block',
-                    })
-                  }
+                  onClick={() => mutation.mutate({ id: confirmStudent.id, blocked: actionType === 'block' })}
                   disabled={mutation.isPending}
                   className={`flex-1 py-2.5 rounded-xl text-sm font-semibold text-white transition-all flex items-center justify-center gap-2 disabled:opacity-60 ${
                     actionType === 'block'
                       ? 'bg-red-500 hover:bg-red-600'
                       : 'bg-green-500 hover:bg-green-600'
-                  }`}
-                >
+                  }`}>
                   {mutation.isPending
                     ? <><Loader2 size={14} className="animate-spin" />Saving...</>
                     : actionType === 'block' ? 'Block Student' : 'Unblock Student'}
@@ -319,6 +285,6 @@ export default function UserManagement() {
           </div>
         </div>
       )}
-    </AdminLayout>
+    </>
   );
 }
