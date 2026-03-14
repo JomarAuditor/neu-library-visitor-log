@@ -36,7 +36,7 @@ export default function WelcomePage() {
 
       <div className="relative z-10 text-center max-w-sm mx-auto animate-scale-in">
         {/* Logo */}
-        <img src="public/NEU-Library-logo.png" alt="NEU Library" className="mx-auto mb-5 drop-shadow-lg" style={{ width: 124, height: 'auto' }} />
+        <img src="/NEU-Library-logo.png" alt="NEU Library" className="mx-auto mb-5 drop-shadow-lg" style={{ width: 124, height: 'auto' }} />
 
         {/* Icon */}
         <div className={`w-24 h-24 rounded-full flex items-center justify-center mx-auto mb-5 shadow-2xl
