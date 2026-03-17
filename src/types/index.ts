@@ -1,30 +1,27 @@
 // =====================================================================
-// NEU Library Visitor Log System
-// TypeScript Type Definitions — Normalized Schema (3NF)
+// NEU Library — TypeScript Type Definitions
 // File: src/types/index.ts
 // =====================================================================
 
 export type VisitPurpose = 'Reading' | 'Research' | 'Studying' | 'Computer Use';
 export type LoginMethod  = 'QR Code' | 'Email';
 export type TimeFilter   = 'today' | 'week' | 'month' | 'year' | 'custom';
+export type VisitorType  = 'Student' | 'Faculty' | 'Staff';
 
-// ── Normalized lookup tables ───────────────────────────────────────────
+// ── Lookup tables ─────────────────────────────────────────────────────
 export interface College {
-  id:          number;
-  name:        string;
-  created_at?: string;
+  id:   number;
+  name: string;
 }
 
 export interface Program {
-  id:          number;
-  college_id:  number;
-  name:        string;
-  created_at?: string;
-  // Populated when fetched with join: .select('*, colleges(*)')
-  colleges?:   College;
+  id:         number;
+  college_id: number;
+  name:       string;
+  colleges?:  College;
 }
 
-// ── Core entities ──────────────────────────────────────────────────────
+// ── Core entities ─────────────────────────────────────────────────────
 export interface Profile {
   id:         string;
   email:      string;
@@ -38,13 +35,13 @@ export interface Student {
   email:          string;
   student_number: string;
   name:           string;
-  program_id:     number;        // FK to programs (replaces old college + course text)
+  program_id:     number | null;   // nullable for Faculty/Staff
+  visitor_type:   VisitorType;     // Student | Faculty | Staff
   qr_code_data:   string | null;
   is_blocked:     boolean;
   created_at:     string;
   updated_at:     string;
-  // Populated when fetched with nested join:
-  // .select('*, programs(*, colleges(*))')
+  // Joined from Supabase .select() with nested relations
   programs?: Program & {
     colleges: College;
   };
@@ -56,18 +53,27 @@ export interface VisitorLog {
   purpose:          VisitPurpose;
   login_method:     LoginMethod;
   time_in:          string;
-  time_out:         string | null;  // NULL = student currently inside
-  duration_minutes: number | null;  // NULL until time_out is recorded
+  time_out:         string | null;
+  duration_minutes: number | null;
   date:             string;
   created_at:       string;
-  // Populated with nested join:
-  // .select('*, students(*, programs(*, colleges(*)))')
+  // Joined
   students?: Student & {
-    programs: Program & { colleges: College };
+    programs?: Program & { colleges: College };
   };
 }
 
-// ── Dashboard statistics ───────────────────────────────────────────────
+// ── Dashboard filters ─────────────────────────────────────────────────
+export interface DashboardFilters {
+  timeFilter:   'day' | 'week' | 'custom';
+  dateFrom:     string;
+  dateTo:       string;
+  purpose:      string;     // '' = all, or specific purpose
+  collegeId:    number | null;
+  visitorType:  string;     // '' = all, or 'Student' | 'Faculty' | 'Staff'
+}
+
+// ── Stats ─────────────────────────────────────────────────────────────
 export interface StatCards {
   today:      number;
   this_week:  number;
@@ -78,10 +84,12 @@ export interface StatCards {
 export interface CollegeStat { college: string; count: number; }
 export interface CourseStat  { course:  string; count: number; }
 
-// ── Constants ──────────────────────────────────────────────────────────
+// ── Constants ─────────────────────────────────────────────────────────
 export const PURPOSES: VisitPurpose[] = [
   'Reading', 'Research', 'Studying', 'Computer Use',
 ];
+
+export const VISITOR_TYPES: VisitorType[] = ['Student', 'Faculty', 'Staff'];
 
 export const PURPOSE_EMOJI: Record<VisitPurpose, string> = {
   'Reading':      '📖',
