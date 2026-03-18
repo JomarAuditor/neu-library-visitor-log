@@ -1,13 +1,12 @@
-// =====================================================================
-// NEU Library — Admin Dashboard
-// File: src/pages/admin/Dashboard.tsx
-// =====================================================================
-// PROFESSOR'S REQUIREMENTS:
-//   ✅ View stats by Day, Week, or Custom Date Range — shown in CARDS
-//   ✅ Filter by reason for visiting (purpose)
-//   ✅ Filter by college
-//   ✅ Filter by employee type (Student / Faculty / Staff)
-// =====================================================================
+// src/pages/admin/Dashboard.tsx
+// FIX: Removed <AdminLayout> wrapper — App.tsx already wraps admin routes in AdminLayout.
+//      Having it here caused DOUBLE wrapping → double sidebar, broken layout.
+//
+// PROFESSOR REQUIREMENTS MET:
+//   ✅ Stats by Day / Week / Custom date range — shown in CARDS
+//   ✅ Filter by Reason for Visit (purpose)
+//   ✅ Filter by College
+//   ✅ Filter by Visitor Type (Student / Faculty / Staff / Employees)
 
 import { useState, useMemo } from 'react';
 import {
@@ -16,9 +15,8 @@ import {
   GraduationCap, Briefcase, CalendarDays, X,
 } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
-import { AdminLayout } from '@/components/layout/AdminLayout';
-import { PageHeader } from '@/components/layout/AdminSidebar';
-import { StatsCard } from '@/components/admin/StatsCard';
+import { PageHeader }  from '@/components/layout/AdminSidebar';
+import { StatsCard }   from '@/components/admin/StatsCard';
 import { CollegeChart } from '@/components/admin/CollegeChart';
 import { CourseChart }  from '@/components/admin/CourseChart';
 import { useCurrentlyInside, useDashboardData, useColleges, fetchAllLogsCSV } from '@/hooks/useStats';
@@ -31,8 +29,7 @@ function getDateRange(filter: TimeFilter, cfrom: string, cto: string) {
   const today = new Date().toISOString().split('T')[0];
   if (filter === 'day') return { from: today, to: today };
   if (filter === 'week') {
-    const d = new Date();
-    d.setDate(d.getDate() - d.getDay());
+    const d = new Date(); d.setDate(d.getDate() - d.getDay());
     return { from: d.toISOString().split('T')[0], to: today };
   }
   return { from: cfrom || today, to: cto || today };
@@ -41,12 +38,10 @@ function getDateRange(filter: TimeFilter, cfrom: string, cto: string) {
 export default function Dashboard() {
   const qc = useQueryClient();
 
-  // ── Time filter ───────────────────────────────────────────────────
   const [timeFilter, setTimeFilter] = useState<TimeFilter>('day');
-  const [cfrom,      setCfrom]      = useState('');
-  const [cto,        setCto]        = useState('');
+  const [cfrom, setCfrom] = useState('');
+  const [cto,   setCto]   = useState('');
 
-  // ── Stats filters ─────────────────────────────────────────────────
   const [purposeFilter,     setPurposeFilter]     = useState('');
   const [collegeFilter,     setCollegeFilter]     = useState<number | ''>('');
   const [visitorTypeFilter, setVisitorTypeFilter] = useState('');
@@ -56,40 +51,30 @@ export default function Dashboard() {
 
   const { from, to } = getDateRange(timeFilter, cfrom, cto);
 
-  // ── Data ──────────────────────────────────────────────────────────
   const { data: rawLogs = [], isLoading: statsLoading } = useDashboardData(timeFilter, cfrom || undefined, cto || undefined);
-  const { count: inside, loading: insideLoading } = useCurrentlyInside();
-  const { data: colleges = [] } = useColleges();
+  const { count: inside, loading: insideLoading }       = useCurrentlyInside();
+  const { data: colleges = [], isLoading: collegesLoading } = useColleges();
 
-  // ── Apply client-side filters ─────────────────────────────────────
   const filteredLogs = useMemo(() => {
     return (rawLogs as any[]).filter(log => {
-      // Filter by purpose
       if (purposeFilter && log.purpose !== purposeFilter) return false;
-
-      // Filter by college (through join)
       if (collegeFilter !== '') {
-        const cid = log.students?.programs?.college_id;
+        const cid = log.students?.programs?.college_id ?? log.students?.programs?.colleges?.id;
         if (cid !== collegeFilter) return false;
       }
-
-      // Filter by visitor type
       if (visitorTypeFilter) {
         const vt = log.students?.visitor_type ?? 'Student';
         if (vt !== visitorTypeFilter) return false;
       }
-
       return true;
     });
   }, [rawLogs, purposeFilter, collegeFilter, visitorTypeFilter]);
 
-  // ── Computed stats ────────────────────────────────────────────────
   const totalVisits    = filteredLogs.length;
   const uniqueVisitors = new Set(filteredLogs.map((l: any) => l.students?.id).filter(Boolean)).size;
   const studentVisits  = filteredLogs.filter((l: any) => (l.students?.visitor_type ?? 'Student') === 'Student').length;
   const employeeVisits = filteredLogs.filter((l: any) => ['Faculty', 'Staff'].includes(l.students?.visitor_type ?? '')).length;
 
-  // Purpose breakdown for mini cards
   const purposeBreakdown = PURPOSES.map(p => ({
     purpose: p,
     count:   filteredLogs.filter((l: any) => l.purpose === p).length,
@@ -99,68 +84,53 @@ export default function Dashboard() {
   const hasFilters = !!purposeFilter || collegeFilter !== '' || !!visitorTypeFilter;
 
   const clearFilters = () => {
-    setPurposeFilter('');
-    setCollegeFilter('');
-    setVisitorTypeFilter('');
+    setPurposeFilter(''); setCollegeFilter(''); setVisitorTypeFilter('');
   };
 
-  // ── Refresh ───────────────────────────────────────────────────────
   const handleRefresh = async () => {
     setRefreshing(true);
     await qc.invalidateQueries();
     setTimeout(() => setRefreshing(false), 800);
   };
 
-  // ── Export ────────────────────────────────────────────────────────
   const handleExport = async () => {
     setExporting(true);
     try {
-      const filter = timeFilter === 'custom' ? 'custom' : timeFilter === 'day' ? 'today' : 'week';
-      const logs = await fetchAllLogsCSV(filter, from, to);
-      exportCSV(
-        logs.map((l: any) => ({
-          Name:            l.students?.name                     ?? '',
-          Email:           l.students?.email                    ?? '',
-          'ID Number':     l.students?.student_number           ?? '',
-          'Visitor Type':  l.students?.visitor_type             ?? 'Student',
-          College:         l.students?.programs?.colleges?.name ?? '',
-          Program:         l.students?.programs?.name           ?? '',
-          Purpose:         l.purpose,
-          'Login Method':  l.login_method,
-          Date:            fmtDate(l.time_in),
-          'Time In':       fmtTime(l.time_in),
-          'Time Out':      l.time_out ? fmtTime(l.time_out) : 'Still Inside',
-          Duration:        fmtDuration(l.duration_minutes),
-        })),
-        `NEU_Library_Stats_${from}_to_${to}`
-      );
+      const f = timeFilter === 'custom' ? 'custom' : timeFilter === 'day' ? 'today' : 'week';
+      const logs = await fetchAllLogsCSV(f, from, to);
+      exportCSV(logs.map((l: any) => ({
+        Name:           l.students?.name                     ?? '',
+        Email:          l.students?.email                    ?? '',
+        'ID Number':    l.students?.student_number           ?? '',
+        'Visitor Type': l.students?.visitor_type             ?? 'Student',
+        College:        l.students?.programs?.colleges?.name ?? '',
+        Program:        l.students?.programs?.name           ?? '',
+        Purpose:        l.purpose,
+        'Login Method': l.login_method,
+        Date:           fmtDate(l.time_in),
+        'Time In':      fmtTime(l.time_in),
+        'Time Out':     l.time_out ? fmtTime(l.time_out) : 'Still Inside',
+        Duration:       fmtDuration(l.duration_minutes),
+      })), `NEU_Library_Stats_${from}_to_${to}`);
     } catch (err: any) {
       alert('Export failed: ' + (err?.message ?? 'Please try again.'));
-    } finally {
-      setExporting(false);
-    }
+    } finally { setExporting(false); }
   };
 
-  return (
-    <AdminLayout>
-      <PageHeader
-        title="Visitor Dashboard"
-        subtitle="NEU Library Management System"
-      />
+  const chartFilter = timeFilter === 'custom' ? 'custom' : timeFilter === 'day' ? 'today' : 'week';
 
-      {/* ── TIME FILTER BAR ── */}
+  return (
+    <>
+      <PageHeader title="Visitor Dashboard" subtitle="NEU Library Management System" />
+
+      {/* Time filter bar */}
       <div className="flex flex-wrap items-center gap-3 mb-5 animate-fade-up">
         <div className="flex bg-white rounded-xl border border-neu-border shadow-sm p-1 gap-0.5">
-          {([
-            ['day',    '📅 Today'],
-            ['week',   '📆 This Week'],
-            ['custom', '📋 Custom Range'],
-          ] as const).map(([v, label]) => (
+          {([['day','📅 Today'],['week','📆 This Week'],['custom','📋 Custom Range']] as const).map(([v, label]) => (
             <button key={v} onClick={() => setTimeFilter(v)}
               className={`px-3 py-2 rounded-lg text-xs font-semibold transition-all ${
                 timeFilter === v ? 'bg-neu-blue text-white' : 'text-slate-500 hover:text-neu-blue hover:bg-neu-light'
-              }`}
-            >
+              }`}>
               {label}
             </button>
           ))}
@@ -189,7 +159,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* ── FILTER ROW — 3 dropdowns ── */}
+      {/* 3 filter dropdowns — professor requirement */}
       <div className="card-p mb-5 animate-fade-up">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
@@ -210,17 +180,13 @@ export default function Dashboard() {
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-
-          {/* Filter 1: Reason for visiting */}
+          {/* Filter 1: Reason for Visit */}
           <div>
             <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5">
               <BookOpen size={10} className="inline mr-1" />Reason for Visit
             </label>
-            <select
-              className="select text-sm"
-              value={purposeFilter}
-              onChange={e => setPurposeFilter(e.target.value)}
-            >
+            <select className="select text-sm" value={purposeFilter}
+              onChange={e => setPurposeFilter(e.target.value)}>
               <option value="">All Purposes</option>
               {PURPOSES.map(p => <option key={p} value={p}>{p}</option>)}
             </select>
@@ -231,28 +197,21 @@ export default function Dashboard() {
             <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5">
               <GraduationCap size={10} className="inline mr-1" />College
             </label>
-            <select
-              className="select text-sm"
-              value={collegeFilter}
+            <select className="select text-sm" value={collegeFilter}
               onChange={e => setCollegeFilter(e.target.value ? Number(e.target.value) : '')}
-            >
-              <option value="">All Colleges</option>
-              {colleges.map((c: any) => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
+              disabled={collegesLoading}>
+              <option value="">{collegesLoading ? 'Loading colleges…' : 'All Colleges'}</option>
+              {colleges.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
           </div>
 
-          {/* Filter 3: Visitor Type (Student / Faculty / Staff) */}
+          {/* Filter 3: Visitor Type (employee check) */}
           <div>
             <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5">
-              <Briefcase size={10} className="inline mr-1" />Visitor Type (Employee)
+              <Briefcase size={10} className="inline mr-1" />Visitor Type
             </label>
-            <select
-              className="select text-sm"
-              value={visitorTypeFilter}
-              onChange={e => setVisitorTypeFilter(e.target.value)}
-            >
+            <select className="select text-sm" value={visitorTypeFilter}
+              onChange={e => setVisitorTypeFilter(e.target.value)}>
               <option value="">All Visitors</option>
               <option value="Student">Students Only</option>
               <option value="Faculty">Faculty / Teachers</option>
@@ -261,7 +220,6 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Active filter pills */}
         {hasFilters && (
           <div className="flex flex-wrap gap-1.5 mt-3">
             {purposeFilter && (
@@ -272,7 +230,7 @@ export default function Dashboard() {
             )}
             {collegeFilter !== '' && (
               <span className="inline-flex items-center gap-1 text-[11px] bg-blue-50 text-blue-700 border border-blue-200 px-2.5 py-1 rounded-full font-semibold">
-                {colleges.find((c: any) => c.id === collegeFilter)?.name?.replace('College of ', '') ?? 'College'}
+                {(colleges as any[]).find(c => c.id === collegeFilter)?.name?.replace('College of ', '') ?? 'College'}
                 <button onClick={() => setCollegeFilter('')} className="hover:text-red-500 ml-0.5">×</button>
               </span>
             )}
@@ -286,47 +244,18 @@ export default function Dashboard() {
         )}
       </div>
 
-      {/* ── STAT CARDS ── */}
+      {/* Stat cards */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-6 animate-fade-up">
+        <StatsCard title={timeFilter === 'day' ? "Today's Visits" : timeFilter === 'week' ? 'This Week' : 'Date Range'}
+          value={statsLoading ? 0 : totalVisits} icon={Users} loading={statsLoading} delay={0} />
+        <StatsCard title="Unique Visitors" value={statsLoading ? 0 : uniqueVisitors}
+          icon={CalendarDays} loading={statsLoading} delay={0.06} />
+        <StatsCard title="Students" value={statsLoading ? 0 : studentVisits}
+          icon={GraduationCap} loading={statsLoading} delay={0.12} />
+        <StatsCard title="Employees" subtitle="Faculty & Staff" value={statsLoading ? 0 : employeeVisits}
+          icon={Briefcase} loading={statsLoading} delay={0.18} />
 
-        {/* Total Visits */}
-        <StatsCard
-          title={timeFilter === 'day' ? "Today's Visits" : timeFilter === 'week' ? 'This Week' : 'Custom Range'}
-          value={statsLoading ? 0 : totalVisits}
-          icon={Users}
-          loading={statsLoading}
-          delay={0.00}
-        />
-
-        {/* Unique Visitors */}
-        <StatsCard
-          title="Unique Visitors"
-          value={statsLoading ? 0 : uniqueVisitors}
-          icon={CalendarDays}
-          loading={statsLoading}
-          delay={0.06}
-        />
-
-        {/* Student Visits */}
-        <StatsCard
-          title="Students"
-          value={statsLoading ? 0 : studentVisits}
-          icon={GraduationCap}
-          loading={statsLoading}
-          delay={0.12}
-        />
-
-        {/* Employee Visits */}
-        <StatsCard
-          title="Employees"
-          subtitle="Faculty & Staff"
-          value={statsLoading ? 0 : employeeVisits}
-          icon={Briefcase}
-          loading={statsLoading}
-          delay={0.18}
-        />
-
-        {/* Currently Inside — live */}
+        {/* Live currently inside */}
         <div className="col-span-2 lg:col-span-1 animate-fade-up">
           <div className="card-p bg-gradient-to-br from-neu-blue to-neu-mid border-0 relative overflow-hidden h-full min-h-[130px]">
             <div className="absolute inset-0 flex items-center justify-center opacity-[0.07]">
@@ -351,19 +280,17 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* ── PURPOSE BREAKDOWN ── */}
+      {/* Purpose breakdown mini cards */}
       {!statsLoading && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6 animate-fade-up">
           {purposeBreakdown.map(({ purpose, count, emoji }) => (
-            <div
-              key={purpose}
+            <div key={purpose}
               onClick={() => setPurposeFilter(purposeFilter === purpose ? '' : purpose)}
               className={`card-p text-center cursor-pointer transition-all hover:shadow-card-md ${
                 purposeFilter === purpose
                   ? 'border-neu-blue bg-neu-light ring-2 ring-neu-blue/20'
                   : 'hover:border-neu-blue/25'
-              }`}
-            >
+              }`}>
               <p className="text-2xl mb-1">{emoji}</p>
               <p className="text-xl font-bold text-slate-900">{count}</p>
               <p className="text-[11px] text-slate-500 font-medium leading-tight mt-0.5">{purpose}</p>
@@ -372,11 +299,11 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* ── CHARTS ── */}
+      {/* Charts */}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
-        <CollegeChart filter={timeFilter === 'custom' ? 'custom' : timeFilter === 'day' ? 'today' : 'week'} from={from} to={to} />
-        <CourseChart  filter={timeFilter === 'custom' ? 'custom' : timeFilter === 'day' ? 'today' : 'week'} from={from} to={to} />
+        <CollegeChart filter={chartFilter} from={from} to={to} />
+        <CourseChart  filter={chartFilter} from={from} to={to} />
       </div>
-    </AdminLayout>
+    </>
   );
 }

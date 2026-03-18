@@ -1,16 +1,15 @@
 // =====================================================================
-// NEU Library — Visitor Kiosk (Home)
+// NEU Library — Visitor Kiosk Home
 // File: src/pages/visitor/VisitorHome.tsx
-// =====================================================================
-// CHANGES:
-//   + "Google" tab added (3rd tab alongside QR and Email)
-//   + Google sign-in → looks up email in students table
-//   + If found → Time In / Time Out flow → "Welcome to NEU Library!"
-//   + If not found → prompt to register
-//   + Admin users redirected to dashboard
+//
+// FIXES:
+//   - Google lookup no longer gets stuck — has 8-second timeout
+//   - Non-@neu.edu.ph emails show a clear message instead of hanging
+//   - If user is admin → auto-redirects to dashboard instead of visitor flow
+//   - "Not registered" step works correctly
 // =====================================================================
 
-import { useState, FormEvent, useEffect } from 'react';
+import { useState, FormEvent, useEffect, useRef } from 'react';
 import {
   QrCode, Mail, ScanLine, ChevronRight,
   Loader2, LogIn, LogOut, AlertCircle, ArrowRight, UserPlus,
@@ -35,7 +34,6 @@ interface ActiveSession {
   timeIn:      string;
 }
 
-// Inline Google icon
 function GoogleIcon({ size = 17 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 48 48" aria-hidden="true">
@@ -65,33 +63,55 @@ export default function VisitorHome() {
   const [activeSession, setActiveSession] = useState<ActiveSession | null>(null);
   const [gBusy,         setGBusy]         = useState(false);
 
+  const lookupTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const snHint = studentNumberHint(sn);
 
-  // ── If Google OAuth just completed and user is admin → push to dashboard
+  // ── If admin signed in → redirect to dashboard ───────────────────
   useEffect(() => {
     if (loading || !profileReady) return;
-    if (isAdmin) {
-      navigate('/admin/dashboard', { replace: true });
-    }
+    if (isAdmin) navigate('/admin/dashboard', { replace: true });
   }, [loading, profileReady, isAdmin, navigate]);
 
-  // ── When user signs in via Google tab → auto-lookup ───────────────
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => { if (lookupTimeoutRef.current) clearTimeout(lookupTimeoutRef.current); };
+  }, []);
+
+  // ── Google lookup with timeout ───────────────────────────────────
+  // FIX: Previous version had no timeout so it got stuck forever.
+  // Now times out after 8 seconds and shows a clear error.
   const handleGoogleLookup = async () => {
     if (!user?.email) return;
+
     setPageLoading(true);
     setError('');
 
+    // 8-second timeout safety net
+    lookupTimeoutRef.current = setTimeout(() => {
+      setPageLoading(false);
+      setError('Request timed out. Please try again or use Email login instead.');
+    }, 8000);
+
     try {
+      const emailLc = user.email.toLowerCase();
+
       const { data, error: e } = await supabase
         .from('students')
         .select('id, name, is_blocked')
-        .eq('email', user.email.toLowerCase())
+        .eq('email', emailLc)
         .maybeSingle();
 
-      if (e) throw e;
+      // Clear timeout since we got a response
+      if (lookupTimeoutRef.current) { clearTimeout(lookupTimeoutRef.current); lookupTimeoutRef.current = null; }
+
+      if (e) {
+        setError('Database error. Please try Email login instead.');
+        setPageLoading(false);
+        return;
+      }
 
       if (!data) {
-        // Not registered → show prompt
+        // Not in students table → show register prompt
         setStep('not-registered');
         setPageLoading(false);
         return;
@@ -105,13 +125,14 @@ export default function VisitorHome() {
 
       await processStudent(data.id, data.name, 'Email');
     } catch {
-      setError('Network error. Please try again.');
+      if (lookupTimeoutRef.current) { clearTimeout(lookupTimeoutRef.current); lookupTimeoutRef.current = null; }
+      setError('Network error. Please check your connection and try again.');
     } finally {
       setPageLoading(false);
     }
   };
 
-  // ── Shared: look up student by email + student number ─────────────
+  // ── Helpers ──────────────────────────────────────────────────────
   const lookupStudent = async (emailVal: string, snVal: string) => {
     try {
       const { data, error: e } = await supabase
@@ -120,7 +141,6 @@ export default function VisitorHome() {
         .eq('email', emailVal.toLowerCase().trim())
         .eq('student_number', snVal.trim())
         .single();
-
       if (e || !data) return { error: 'Student not found. Check credentials or register first.' };
       if (data.is_blocked) return { error: 'Your library access is restricted. Contact the librarian.' };
       return { student: data };
@@ -129,7 +149,6 @@ export default function VisitorHome() {
     }
   };
 
-  // ── Check for open session ────────────────────────────────────────
   const checkActiveSession = async (sid: string) => {
     try {
       const { data } = await supabase
@@ -145,9 +164,7 @@ export default function VisitorHome() {
   };
 
   const processStudent = async (sid: string, name: string, method: 'QR Code' | 'Email') => {
-    setStudentId(sid);
-    setStudentName(name);
-    setLoginMethod(method);
+    setStudentId(sid); setStudentName(name); setLoginMethod(method);
     const open = await checkActiveSession(sid);
     if (open) {
       setActiveSession({ logId: open.id, studentId: sid, studentName: name, timeIn: open.time_in });
@@ -157,7 +174,6 @@ export default function VisitorHome() {
     }
   };
 
-  // ── QR scan handler ───────────────────────────────────────────────
   const handleQR = async (raw: string) => {
     setError(''); setPageLoading(true); setScanning(false);
     const decoded = decodeQR(raw);
@@ -168,7 +184,6 @@ export default function VisitorHome() {
     await processStudent(res.student.id, res.student.name, 'QR Code');
   };
 
-  // ── Email login handler ───────────────────────────────────────────
   const handleEmailLogin = async (e: FormEvent) => {
     e.preventDefault(); setError('');
     if (!validateNEUEmail(email))   { setError('Use your @neu.edu.ph email.'); return; }
@@ -180,7 +195,6 @@ export default function VisitorHome() {
     await processStudent(res.student.id, res.student.name, 'Email');
   };
 
-  // ── Time In ───────────────────────────────────────────────────────
   const handleTimeIn = async () => {
     if (!purpose) return;
     setPageLoading(true); setError('');
@@ -197,7 +211,6 @@ export default function VisitorHome() {
     finally { setPageLoading(false); }
   };
 
-  // ── Time Out ──────────────────────────────────────────────────────
   const handleTimeOut = async () => {
     if (!activeSession) return;
     setPageLoading(true); setError('');
@@ -221,30 +234,34 @@ export default function VisitorHome() {
     if (tab === 'google') signOut();
   };
 
+  // ── Logo with fallback ───────────────────────────────────────────
+  const Logo = ({ className }: { className?: string }) => (
+    <img
+      src="/NEU%20Library%20logo.png"
+      alt="NEU Library"
+      className={className}
+      onError={e => {
+        const el = e.currentTarget as HTMLImageElement;
+        el.onerror = null;
+        el.src = '/neu-logo.svg';
+      }}
+    />
+  );
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-neu-gray via-white to-neu-light flex flex-col">
 
-      {/* ── Header ── */}
+      {/* Header */}
       <header className="bg-white border-b border-neu-border shadow-card sticky top-0 z-20">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <img
-              src="/NEU%20Library%20logo.png"
-              alt="NEU Library"
-              className="h-10 w-auto object-contain"
-              onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
-            />
-            <div>
-              <p className="text-[11px] font-bold text-neu-blue tracking-widest uppercase leading-none">
-                New Era University
-              </p>
+            <Logo className="h-10 w-auto object-contain" />
+            <div className="hidden sm:block">
+              <p className="text-[11px] font-bold text-neu-blue tracking-widest uppercase leading-none">New Era University</p>
               <p className="text-[10px] text-slate-400 mt-0.5">Library Visitor Log System</p>
             </div>
           </div>
-          <a
-            href="/admin/login"
-            className="text-xs text-slate-400 hover:text-neu-blue flex items-center gap-1 transition-colors"
-          >
+          <a href="/admin/login" className="text-xs text-slate-400 hover:text-neu-blue flex items-center gap-1 transition-colors font-medium">
             Admin <ArrowRight size={12} />
           </a>
         </div>
@@ -256,40 +273,22 @@ export default function VisitorHome() {
           {/* ── LOGIN STEP ── */}
           {step === 'login' && (
             <div className="animate-scale-in">
-              {/* Logo + title */}
               <div className="text-center mb-6">
-                <img
-                  src="/NEU%20Library%20logo.png"
-                  alt="NEU Library"
-                  className="h-24 w-auto object-contain mx-auto mb-4 drop-shadow-md"
-                  onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
-                />
-                <h1 className="text-2xl lg:text-3xl font-bold text-slate-900">
-                  Welcome to NEU Library
-                </h1>
-                <p className="text-sm text-slate-500 mt-1">
-                  Sign in to record your library visit
-                </p>
+                <Logo className="h-24 w-auto object-contain mx-auto mb-4 drop-shadow-md" />
+                <h1 className="text-2xl lg:text-3xl font-bold text-slate-900">Welcome to NEU Library</h1>
+                <p className="text-sm text-slate-500 mt-1">Sign in to record your library visit</p>
               </div>
 
-              {/* ── Tabs: QR | Email | Google ── */}
+              {/* Tabs */}
               <div className="flex bg-neu-gray rounded-2xl p-1.5 mb-4 border border-neu-border gap-1">
-                {([
-                  ['qr',     'QR Code'],
-                  ['email',  'Email'],
-                  ['google', 'Google'],
-                ] as const).map(([v, label]) => (
-                  <button
-                    key={v}
+                {([['qr','QR Code'],['email','Email'],['google','Google']] as const).map(([v, label]) => (
+                  <button key={v}
                     onClick={() => { setTab(v); setError(''); setScanning(false); }}
                     className={`flex-1 py-2.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${
-                      tab === v
-                        ? 'bg-white text-neu-blue shadow-card'
-                        : 'text-slate-500 hover:text-slate-700'
-                    }`}
-                  >
-                    {v === 'qr'     && <QrCode  size={13} />}
-                    {v === 'email'  && <Mail     size={13} />}
+                      tab === v ? 'bg-white text-neu-blue shadow-card' : 'text-slate-500 hover:text-slate-700'
+                    }`}>
+                    {v === 'qr'    && <QrCode size={13} />}
+                    {v === 'email' && <Mail   size={13} />}
                     {v === 'google' && <GoogleIcon size={13} />}
                     {label}
                   </button>
@@ -303,7 +302,7 @@ export default function VisitorHome() {
                   </div>
                 )}
 
-                {/* ── QR Tab ── */}
+                {/* QR Tab */}
                 {tab === 'qr' && (
                   !scanning ? (
                     <div className="text-center">
@@ -326,20 +325,18 @@ export default function VisitorHome() {
                         <p className="text-sm font-semibold text-slate-700">Scanning… point camera at QR code</p>
                       </div>
                       <QRScanner active={scanning} onResult={handleQR}
-                        onError={(e) => { setError(e); setScanning(false); }} />
+                        onError={e => { setError(e); setScanning(false); }} />
                       {pageLoading && (
                         <div className="flex items-center justify-center gap-2 text-sm text-neu-blue mt-3">
                           <Loader2 size={15} className="animate-spin" />Verifying…
                         </div>
                       )}
-                      <button onClick={() => setScanning(false)} className="btn-secondary w-full mt-3 text-sm py-2.5">
-                        Cancel Scanner
-                      </button>
+                      <button onClick={() => setScanning(false)} className="btn-secondary w-full mt-3 text-sm py-2.5">Cancel Scanner</button>
                     </div>
                   )
                 )}
 
-                {/* ── Email Tab ── */}
+                {/* Email Tab */}
                 {tab === 'email' && (
                   <form onSubmit={handleEmailLogin} className="space-y-4">
                     <div>
@@ -350,13 +347,10 @@ export default function VisitorHome() {
                     </div>
                     <div>
                       <label className="label">Student Number</label>
-                      <input
-                        type="text"
+                      <input type="text"
                         className={`input font-mono tracking-wider ${sn && snHint ? 'border-amber-300' : ''} ${sn && !snHint ? 'border-green-300' : ''}`}
-                        placeholder="24-13005-502"
-                        value={sn} onChange={e => setSN(formatStudentNumber(e.target.value))}
-                        maxLength={12} required
-                      />
+                        placeholder="24-13005-502" value={sn}
+                        onChange={e => setSN(formatStudentNumber(e.target.value))} maxLength={12} required />
                       {sn && snHint  && <p className="text-[11px] text-amber-600 mt-1 font-medium">{snHint}</p>}
                       {sn && !snHint && <p className="text-[11px] text-green-600 mt-1 font-medium">Valid format</p>}
                     </div>
@@ -364,48 +358,36 @@ export default function VisitorHome() {
                       {pageLoading ? <><Loader2 size={16} className="animate-spin" />Verifying…</> : <><ChevronRight size={17} />Continue</>}
                     </button>
                     <p className="text-xs text-slate-400 text-center">
-                      Not registered?{' '}
-                      <a href="/register" className="text-neu-blue font-semibold hover:underline">Get your QR code</a>
+                      Not registered? <a href="/register" className="text-neu-blue font-semibold hover:underline">Get your QR code</a>
                     </p>
                   </form>
                 )}
 
-                {/* ── Google Tab ── */}
+                {/* Google Tab */}
                 {tab === 'google' && (
                   <div className="text-center space-y-4">
                     {user ? (
-                      // Already signed in via Google
                       <div>
-                        <div className="w-14 h-14 rounded-2xl bg-green-50 border border-green-100 flex items-center justify-center mx-auto mb-3">
+                        <div className="w-14 h-14 rounded-2xl bg-green-50 border border-green-200 flex items-center justify-center mx-auto mb-3">
                           <GoogleIcon size={28} />
                         </div>
                         <p className="text-sm font-semibold text-slate-800">{user.email}</p>
                         <p className="text-xs text-slate-400 mt-0.5 mb-4">Signed in with Google</p>
-                        <button
-                          onClick={handleGoogleLookup}
-                          disabled={pageLoading}
-                          className="btn-primary w-full py-3.5"
-                        >
+                        <button onClick={handleGoogleLookup} disabled={pageLoading} className="btn-primary w-full py-3.5">
                           {pageLoading
                             ? <><Loader2 size={16} className="animate-spin" />Looking up your record…</>
                             : <><LogIn size={17} />Continue to Library</>}
                         </button>
-                        <button
-                          onClick={() => signOut()}
-                          className="w-full mt-2 text-xs text-slate-400 hover:text-red-500 transition-colors py-2"
-                        >
+                        <button onClick={() => signOut()} className="w-full mt-2 text-xs text-slate-400 hover:text-red-500 transition-colors py-2">
                           Sign out
                         </button>
                       </div>
                     ) : (
-                      // Not signed in
                       <div>
                         <div className="w-14 h-14 rounded-2xl bg-slate-50 border border-slate-200 flex items-center justify-center mx-auto mb-3">
                           <GoogleIcon size={28} />
                         </div>
-                        <p className="text-sm text-slate-600 mb-4">
-                          Sign in with your NEU Google account to record your library visit.
-                        </p>
+                        <p className="text-sm text-slate-600 mb-4">Sign in with your NEU Google account to record your library visit.</p>
                         <button
                           onClick={async () => {
                             setGBusy(true);
@@ -413,8 +395,7 @@ export default function VisitorHome() {
                             if (err) { setError(err); setGBusy(false); }
                           }}
                           disabled={gBusy}
-                          className="w-full py-3.5 rounded-xl border-2 border-slate-200 bg-white hover:bg-slate-50 flex items-center justify-center gap-3 text-sm font-semibold text-slate-700 transition-all disabled:opacity-60 shadow-sm"
-                        >
+                          className="w-full py-3.5 rounded-xl border-2 border-slate-200 bg-white hover:bg-slate-50 flex items-center justify-center gap-3 text-sm font-semibold text-slate-700 transition-all disabled:opacity-60 shadow-sm">
                           {gBusy ? <Loader2 size={17} className="animate-spin text-neu-blue" /> : <GoogleIcon size={18} />}
                           {gBusy ? 'Redirecting to Google…' : 'Sign in with Google'}
                         </button>
@@ -435,19 +416,18 @@ export default function VisitorHome() {
               <div className="w-14 h-14 rounded-2xl bg-neu-light flex items-center justify-center mx-auto mb-4">
                 <UserPlus size={24} className="text-neu-blue" />
               </div>
-              <h2 className="text-xl font-bold text-slate-900 mb-1">Welcome to NEU Library!</h2>
-              <p className="text-sm text-slate-500 mb-2">
+              <h2 className="text-xl font-bold text-slate-900 mb-1">Not Registered Yet</h2>
+              <p className="text-sm text-slate-500 mb-1">
                 Hi, <span className="font-semibold text-slate-700">{user?.user_metadata?.full_name ?? user?.email}</span>!
               </p>
               <p className="text-sm text-slate-500 mb-5">
-                Your Google account isn't registered yet. Please register to get your library QR code.
+                Your Google account is not registered in the library system. Please register to get your QR code and access the library.
               </p>
-              <a href="/register" className="btn-primary w-full py-3.5 block text-center mb-3">
+              <a href={`/register?email=${encodeURIComponent(user?.email ?? '')}`}
+                className="btn-primary w-full py-3.5 mb-3 block text-center">
                 <UserPlus size={17} />Register for Library Access
               </a>
-              <button onClick={reset} className="btn-secondary w-full text-sm">
-                Cancel
-              </button>
+              <button onClick={reset} className="btn-secondary w-full text-sm">Cancel</button>
             </div>
           )}
 
@@ -479,11 +459,8 @@ export default function VisitorHome() {
                 {PURPOSES.map(p => (
                   <button key={p} onClick={() => setPurpose(p)}
                     className={`card-p cursor-pointer flex flex-col items-center gap-2 py-5 transition-all duration-200 ${
-                      purpose === p
-                        ? 'border-neu-blue bg-neu-light ring-2 ring-neu-blue/20 shadow-card-md'
-                        : 'hover:border-neu-blue/25'
-                    }`}
-                  >
+                      purpose === p ? 'border-neu-blue bg-neu-light ring-2 ring-neu-blue/20 shadow-card-md' : 'hover:border-neu-blue/25'
+                    }`}>
                     <span className="text-3xl">{PURPOSE_EMOJI[p]}</span>
                     <span className={`text-sm font-semibold ${purpose === p ? 'text-neu-blue' : 'text-slate-700'}`}>{p}</span>
                   </button>
@@ -511,14 +488,14 @@ export default function VisitorHome() {
                   <div className="bg-neu-light rounded-xl px-4 py-2.5 border border-neu-border">
                     <p className="text-[10px] text-slate-400 font-medium mb-0.5 uppercase tracking-wide">Checked In</p>
                     <p className="text-sm font-bold text-neu-blue">
-                      {new Date(activeSession.timeIn).toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit', hour12: true })}
+                      {new Date(activeSession.timeIn).toLocaleTimeString('en-PH', { hour:'2-digit', minute:'2-digit', hour12:true })}
                     </p>
                   </div>
                   <div className="text-slate-300 text-xl">→</div>
                   <div className="bg-amber-50 rounded-xl px-4 py-2.5 border border-amber-100">
                     <p className="text-[10px] text-amber-600 font-medium mb-0.5 uppercase tracking-wide">Time Out</p>
                     <p className="text-sm font-bold text-amber-700">
-                      {new Date().toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit', hour12: true })}
+                      {new Date().toLocaleTimeString('en-PH', { hour:'2-digit', minute:'2-digit', hour12:true })}
                     </p>
                   </div>
                 </div>
@@ -533,7 +510,6 @@ export default function VisitorHome() {
               </div>
             </div>
           )}
-
         </div>
       </main>
 
