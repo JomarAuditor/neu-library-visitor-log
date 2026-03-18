@@ -1,14 +1,6 @@
-// =====================================================================
-// NEU Library — Auth Hook
-// File: src/hooks/useAuth.tsx
-//
-// KEY FEATURES:
-//   - Auto-provisions admin profiles for whitelisted emails on first login
-//   - No manual SQL needed — professor just signs in with Google
-//   - Safety timeout prevents infinite loading
-//   - Exports signIn, signInWithGoogle, signOut, refreshProfile
-//   - profileReady flag so UI knows when loading is truly done
-// =====================================================================
+// src/hooks/useAuth.tsx
+// SECURITY: Only @neu.edu.ph emails are allowed.
+// Non-NEU Google accounts are blocked at the auth state change level.
 
 import {
   createContext, useContext, useEffect,
@@ -17,18 +9,14 @@ import {
 import { User, Session } from '@supabase/supabase-js';
 import { supabase }      from '@/lib/supabase';
 import { Profile }       from '@/types';
+import { isNEUEmail }    from '@/lib/utils';
 
-// ── Admin email whitelist ─────────────────────────────────────────────
-// These emails automatically get admin role on first Google sign-in.
-// No manual SQL needed. Add any email here to grant admin access.
-const ADMIN_EMAILS: string[] = [
-  'jcesperanza@neu.edu.ph',    // Professor — admin access
-  'jomar.auditor@neu.edu.ph',  // Developer test account — admin access
+// Admin whitelist — these emails are auto-provisioned as admin on first Google login
+const ADMIN_EMAILS = [
+  'jcesperanza@neu.edu.ph',
+  'jomar.auditor@neu.edu.ph',
 ];
 
-// ──────────────────────────────────────────────────────────────────────
-// Context interface
-// ──────────────────────────────────────────────────────────────────────
 interface AuthCtx {
   user:         User    | null;
   session:      Session | null;
@@ -36,7 +24,6 @@ interface AuthCtx {
   loading:      boolean;
   profileReady: boolean;
   isAdmin:      boolean;
-
   signIn:           (email: string, password: string) => Promise<{ error: string | null }>;
   signInWithGoogle: (redirectPath?: string)           => Promise<{ error: string | null }>;
   signOut:          ()                                => Promise<void>;
@@ -45,14 +32,10 @@ interface AuthCtx {
 
 const AuthContext = createContext<AuthCtx | undefined>(undefined);
 
-// ──────────────────────────────────────────────────────────────────────
-// Auto-provision profile for whitelisted emails
-// Called automatically after Google sign-in — no manual SQL needed
-// ──────────────────────────────────────────────────────────────────────
-async function autoProvisionProfile(user: User): Promise<Profile | null> {
+async function provisionAdminIfNeeded(user: User): Promise<Profile | null> {
   const email = user.email?.toLowerCase() ?? '';
 
-  // Check if profile already exists
+  // Check existing profile
   const { data: existing } = await supabase
     .from('profiles')
     .select('id, email, full_name, role, created_at')
@@ -64,16 +47,15 @@ async function autoProvisionProfile(user: User): Promise<Profile | null> {
   // Only create profiles for whitelisted admin emails
   if (!ADMIN_EMAILS.includes(email)) return null;
 
-  // Auto-create admin profile
   const fullName = user.user_metadata?.full_name
     ?? user.user_metadata?.name
     ?? email.split('@')[0];
 
-  const { data: created, error } = await supabase
+  const { data } = await supabase
     .from('profiles')
     .upsert({
       id:         user.id,
-      email:      email,
+      email,
       full_name:  fullName,
       role:       'admin',
       created_at: new Date().toISOString(),
@@ -81,77 +63,56 @@ async function autoProvisionProfile(user: User): Promise<Profile | null> {
     .select('id, email, full_name, role, created_at')
     .single();
 
-  if (error) {
-    console.error('[Auth] Auto-provision failed:', error.message);
-    return null;
-  }
-
-  return created as Profile;
+  return (data as Profile) ?? null;
 }
 
-// ──────────────────────────────────────────────────────────────────────
-// Provider
-// ──────────────────────────────────────────────────────────────────────
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user,         setUser]         = useState<User    | null>(null);
   const [session,      setSession]      = useState<Session | null>(null);
   const [profile,      setProfile]      = useState<Profile | null>(null);
   const [loading,      setLoading]      = useState(true);
   const [profileReady, setProfileReady] = useState(false);
-  const safetyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const safety = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // ── Fetch + auto-provision profile ──────────────────────────────────
   const loadProfile = async (u: User): Promise<void> => {
     try {
-      // First try to get existing profile
-      const { data } = await supabase
-        .from('profiles')
-        .select('id, email, full_name, role, created_at')
-        .eq('id', u.id)
-        .maybeSingle();
-
-      if (data) {
-        setProfile(data as Profile);
-        setProfileReady(true);
+      // ENFORCE: Only @neu.edu.ph emails allowed
+      if (!isNEUEmail(u.email)) {
+        // Sign out the non-NEU user immediately
+        await supabase.auth.signOut();
+        setUser(null);
+        setSession(null);
+        setProfile(null);
         return;
       }
-
-      // No profile — try auto-provisioning (for whitelisted emails)
-      const provisioned = await autoProvisionProfile(u);
-      setProfile(provisioned);
-    } catch (err) {
-      console.error('[Auth] loadProfile error:', err);
+      const p = await provisionAdminIfNeeded(u);
+      setProfile(p);
+    } catch {
       setProfile(null);
     } finally {
       setProfileReady(true);
     }
   };
 
-  // ── Listen to Supabase auth changes ─────────────────────────────────
   useEffect(() => {
     let mounted = true;
 
-    // 6-second safety timer — never stay stuck loading
-    safetyTimer.current = setTimeout(() => {
+    safety.current = setTimeout(() => {
       if (mounted) { setLoading(false); setProfileReady(true); }
     }, 6000);
 
-    // Get current session (handles OAuth redirect-back)
     supabase.auth.getSession().then(({ data: { session: s } }) => {
       if (!mounted) return;
       setSession(s);
       setUser(s?.user ?? null);
       if (s?.user) {
-        loadProfile(s.user).finally(() => {
-          if (mounted) setLoading(false);
-        });
+        loadProfile(s.user).finally(() => { if (mounted) setLoading(false); });
       } else {
         setLoading(false);
         setProfileReady(true);
       }
     });
 
-    // Subscribe to future changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (_event, s) => {
         if (!mounted) return;
@@ -171,51 +132,44 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       mounted = false;
       subscription.unsubscribe();
-      if (safetyTimer.current) clearTimeout(safetyTimer.current);
+      if (safety.current) clearTimeout(safety.current);
     };
   }, []);
 
-  // ── Email + password sign-in ─────────────────────────────────────────
-  const signIn = async (
-    email: string, password: string,
-  ): Promise<{ error: string | null }> => {
+  const signIn = async (email: string, password: string): Promise<{ error: string | null }> => {
+    // Block non-NEU emails at the UI level too
+    if (!isNEUEmail(email)) {
+      return { error: 'Only @neu.edu.ph email addresses are allowed.' };
+    }
     try {
       const { error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) return { error: error.message };
-      return { error: null };
+      return { error: error?.message ?? null };
     } catch (e: any) {
       return { error: e?.message ?? 'Sign in failed.' };
     }
   };
 
-  // ── Google OAuth ─────────────────────────────────────────────────────
-  // Uses window.location.origin so localhost stays on localhost
-  const signInWithGoogle = async (
-    redirectPath = '/admin/login',
-  ): Promise<{ error: string | null }> => {
+  const signInWithGoogle = async (redirectPath = '/admin/login'): Promise<{ error: string | null }> => {
     try {
-      const redirectTo = `${window.location.origin}${redirectPath}`;
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
-          redirectTo,
+          redirectTo: `${window.location.origin}${redirectPath}`,
           queryParams: { access_type: 'offline', prompt: 'consent' },
+          // Note: Google OAuth will allow any Google account to attempt sign-in.
+          // Non-NEU accounts are blocked in the onAuthStateChange handler above
+          // which signs them out immediately after the OAuth callback.
         },
       });
-      if (error) return { error: error.message };
-      return { error: null };
+      return { error: error?.message ?? null };
     } catch (e: any) {
       return { error: e?.message ?? 'Google sign-in failed.' };
     }
   };
 
-  // ── Sign out ─────────────────────────────────────────────────────────
   const signOut = async (): Promise<void> => {
     await supabase.auth.signOut();
-    setUser(null);
-    setSession(null);
-    setProfile(null);
-    setProfileReady(false);
+    setUser(null); setSession(null); setProfile(null); setProfileReady(false);
   };
 
   const refreshProfile = async (): Promise<void> => {
@@ -233,9 +187,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 }
 
-// ──────────────────────────────────────────────────────────────────────
-// Hook
-// ──────────────────────────────────────────────────────────────────────
 export function useAuth(): AuthCtx {
   const ctx = useContext(AuthContext);
   if (!ctx) throw new Error('useAuth must be used inside <AuthProvider>');

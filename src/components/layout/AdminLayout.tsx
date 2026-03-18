@@ -1,47 +1,38 @@
-// src/components/layout/AdminLayout.tsx
-// FIX: 6-second safety timeout — never stuck loading forever
-// FIX: accepts children prop (App.tsx passes <Outlet /> as children)
-
 import { ReactNode, useEffect, useRef } from 'react';
 import { Navigate, useNavigate }        from 'react-router-dom';
-import { useAuth }                      from '@/hooks/useAuth';
+import { Loader2 }                      from 'lucide-react';
 import { AdminSidebar }                 from './AdminSidebar';
+import { useAuth }                      from '@/hooks/useAuth';
 
-interface AdminLayoutProps {
-  children: ReactNode;
-}
-
-export function AdminLayout({ children }: AdminLayoutProps) {
+export function AdminLayout({ children }: { children: ReactNode }) {
   const { user, profile, loading, profileReady } = useAuth();
   const navigate = useNavigate();
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const timer    = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Safety: if loading takes more than 6 seconds, force redirect to login
+  // Safety: redirect to login after 6s if still loading
   useEffect(() => {
     if (loading || !profileReady) {
-      timerRef.current = setTimeout(() => {
-        navigate('/admin/login', { replace: true });
-      }, 6000);
+      timer.current = setTimeout(() => navigate('/admin/login', { replace: true }), 6000);
     } else {
-      if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
+      if (timer.current) { clearTimeout(timer.current); timer.current = null; }
     }
-    return () => { if (timerRef.current) clearTimeout(timerRef.current); };
+    return () => { if (timer.current) clearTimeout(timer.current); };
   }, [loading, profileReady, navigate]);
 
   if (loading || !profileReady) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-neu-gray">
-        <div className="flex flex-col items-center gap-3">
-          <div className="w-8 h-8 border-2 border-neu-blue border-t-transparent rounded-full animate-spin" />
+        <div className="text-center">
+          <Loader2 size={26} className="animate-spin text-neu-blue mx-auto mb-3" />
           <p className="text-xs text-slate-400 font-medium">Loading…</p>
         </div>
       </div>
     );
   }
 
-  if (!user) return <Navigate to="/admin/login" replace />;
-  if (profile && profile.role !== 'admin' && profile.role !== 'staff') return <Navigate to="/" replace />;
+  if (!user)    return <Navigate to="/admin/login" replace />;
   if (!profile) return <Navigate to="/admin/login" replace />;
+  if (profile.role !== 'admin' && profile.role !== 'staff') return <Navigate to="/" replace />;
 
   return (
     <div className="min-h-screen bg-neu-gray flex">

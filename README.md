@@ -1,423 +1,416 @@
 # NEU Library Visitor Log System
 
-**New Era University – Library Management System**
+**Live Application:** https://neu-library-visitor-log.vercel.app
+**GitHub Repository:** https://github.com/JomarAuditor/neu-library-visitor-log
 
 ---
 
-# 1. Project Description
+## Table of Contents
 
-The **NEU Library Visitor Log System** is a web-based application designed to record and monitor student visits to the New Era University Library.
-
-The system replaces the traditional paper visitor logbook with a **digital QR-based check-in system**. Students can register once and generate their own QR code. They use this QR code to **scan when entering and leaving the library**.
-
-The first scan records **Time In**, and the second scan records **Time Out**. The system calculates the **duration of the visit automatically**.
-
-Library administrators can access a dashboard that displays **real-time visitor statistics**, including how many students are currently inside the library.
-
-The system is built using modern web technologies including **React, TypeScript, and Supabase**, allowing real-time updates, data visualization, and easy management of visitor records.
-
----
-
-# 2. System Features
-
-## Visitor Features
-
-Students can interact with the system through a simple and mobile-friendly interface.
-
-**Student capabilities:**
-
-* Register using institutional email and student number
-* Generate a personal QR code
-* Scan QR code to enter the library
-* Scan again when leaving the library
-* Select purpose of visit
-* View confirmation screens for Time In and Time Out
-* Receive automatic visit duration calculation
-
-The system also allows students to log in using:
-
-* QR code scanning
-* Email and student number input
+1. [Project Overview](#project-overview)
+2. [Tech Stack](#tech-stack)
+3. [Architecture](#architecture)
+4. [Folder Structure](#folder-structure)
+5. [Database Schema](#database-schema)
+6. [User Roles & Access](#user-roles--access)
+7. [User Experience Flows](#user-experience-flows)
+8. [Features](#features)
+9. [Environment Variables](#environment-variables)
+10. [Local Development](#local-development)
+11. [Deployment](#deployment)
+12. [Security](#security)
 
 ---
 
-## Administrator Features
+## Project Overview
 
-Administrators can monitor library activity through a secure dashboard.
+The **NEU Library Visitor Log System** is a web-based kiosk and management system for New Era University's library. It replaces the traditional paper-based logbook with a digital check-in/out system using QR codes, email, or Google OAuth.
 
-**Admin capabilities:**
-
-* View visitor statistics (Today, Week, Month, Year)
-* See how many students are currently inside the library
-* View visitor logs with full visit details
-* Export visitor records to CSV format
-* Manage student accounts
-* Block or unblock student access
-* View charts showing visitor distribution by college and course
-* Monitor the system in real time
+Library staff and administrators can view real-time visitor statistics, filter by purpose, college, or visitor type, and export data to CSV.
 
 ---
 
-# 3. Time In / Time Out System
+## Tech Stack
 
-The system uses a simple logic to determine whether a student is entering or leaving the library.
-
-### Time In
-
-When a student scans their QR code for the first time:
-
-* The system inserts a new record into the **visitor_logs** table
-* `time_in` is recorded using the current timestamp
-* `time_out` remains **NULL**
-
-This means the student is **currently inside the library**.
+| Layer       | Technology                                     |
+|-------------|------------------------------------------------|
+| Frontend    | React 18 + TypeScript + Vite                   |
+| Styling     | Tailwind CSS with custom NEU brand colors      |
+| Backend     | Supabase (PostgreSQL + Auth + Realtime)        |
+| Charts      | Recharts                                       |
+| State       | TanStack Query (React Query)                   |
+| Auth        | Supabase Auth + Google OAuth 2.0               |
+| Deployment  | Vercel (frontend) + Supabase (backend)         |
 
 ---
 
-### Time Out
-
-When the student scans again:
-
-* The system searches for an existing record where `time_out` is NULL
-* If found, the system updates the record
-* `time_out` is recorded
-* The visit duration is calculated
-
-The student then sees a **Goodbye screen showing their total visit time**.
-
----
-
-### Currently Inside Counter
-
-Students currently inside the library are determined using this condition:
+## Architecture
 
 ```
-time_out IS NULL
-```
-
-These records are used to display the **live "Currently Inside" counter on the admin dashboard**.
-
----
-
-# 4. Technology Stack
-
-The system is built using the following technologies:
-
-**Frontend**
-
-* React
-* TypeScript
-* Vite
-* Tailwind CSS
-* Recharts (for charts)
-
-**Backend**
-
-* Supabase (PostgreSQL database)
-* Supabase Authentication
-* Supabase Realtime
-
-**Other Tools**
-
-* QR Code generation
-* QR code camera scanning
-* CSV file export
-
----
-
-# 5. Project Structure
-
-The project uses a feature-based folder structure to keep components organized.
-
-```
-neu-library-system/
-
-public/
-  neu-logo.svg
-
-src/
-
-components/
-  layout/
-    AdminLayout.tsx
-    AdminSidebar.tsx
-
-  visitor/
-    QRScanner.tsx
-    QRCodeDisplay.tsx
-
-  admin/
-    StatsCard.tsx
-    CollegeChart.tsx
-    CourseChart.tsx
-
-hooks/
-  useAuth.tsx
-  useStats.ts
-
-lib/
-  supabase.ts
-  utils.ts
-
-pages/
-
-  visitor/
-    VisitorHome.tsx
-    StudentRegister.tsx
-    WelcomePage.tsx
-
-  admin/
-    AdminLogin.tsx
-    Dashboard.tsx
-    VisitorLogs.tsx
-    UserManagement.tsx
-
-supabase/
-  schema.sql
-  seed.sql
-
-.env.example
-package.json
-README.md
+┌─────────────────────────────────────────────────────┐
+│                   VISITOR KIOSK                      │
+│         (React SPA — Vercel CDN)                    │
+│                                                      │
+│  ┌──────────┐  ┌──────────┐  ┌──────────────────┐  │
+│  │ QR Scan  │  │  Email   │  │  Google OAuth    │  │
+│  │  Login   │  │  Login   │  │  (@neu.edu.ph)   │  │
+│  └────┬─────┘  └────┬─────┘  └────────┬─────────┘  │
+│       └─────────────┴─────────────────┘             │
+│                       │                             │
+└───────────────────────┼─────────────────────────────┘
+                        │ HTTPS / REST
+┌───────────────────────▼─────────────────────────────┐
+│                   SUPABASE                           │
+│                                                      │
+│  ┌──────────────┐   ┌───────────────────────────┐  │
+│  │  Supabase    │   │    PostgreSQL Database    │  │
+│  │    Auth      │   │                           │  │
+│  │  (Google     │   │  profiles                 │  │
+│  │   OAuth)     │   │  colleges                 │  │
+│  └──────────────┘   │  programs                 │  │
+│                      │  visitors                 │  │
+│  ┌──────────────┐   │  visit_logs               │  │
+│  │  Row Level   │   │                           │  │
+│  │  Security    │   └───────────────────────────┘  │
+│  └──────────────┘                                   │
+│                                                      │
+│  ┌──────────────┐                                   │
+│  │   pg_cron    │  Auto-timeout at 6PM PHT          │
+│  └──────────────┘                                   │
+└─────────────────────────────────────────────────────┘
 ```
 
 ---
 
-# 6. Database Structure
-
-The system uses a **PostgreSQL database provided by Supabase**.
-
-Main tables:
-
-### profiles
-
-Stores administrator information.
-
-Columns may include:
-
-* id
-* email
-* role
-* created_at
-
----
-
-### students
-
-Stores registered student data.
-
-Columns include:
-
-* id
-* full_name
-* email
-* student_number
-* college
-* course
-* qr_code
-* blocked
-
----
-
-### visitor_logs
-
-Stores all library visits.
-
-Columns include:
-
-* id
-* student_id
-* purpose
-* login_method
-* time_in
-* time_out
-* created_at
-
-Each row represents one visit session.
-
----
-
-# 7. Student Visitor Flow
-
-## Step 1 — Student Registration
-
-Students must register once before using the system.
-
-Steps:
-
-1. Open `/register`
-2. Enter:
-
-   * Full Name
-   * NEU Email
-   * Student Number
-   * College
-   * Course
-3. Click **Generate QR Code**
-4. Download or save the QR code
-
----
-
-## Step 2 — Time In (Entering the Library)
-
-1. Go to `/`
-2. Scan QR code or enter email + student number
-3. Select purpose of visit
-4. Click **Confirm Time In**
-
-The system records:
+## Folder Structure
 
 ```
-time_in = current time
-time_out = NULL
+neu-lib-visitor-system/
+│
+├── public/
+│   ├── NEU Library logo.png        # Primary logo
+│   └── neu-logo.svg                # Fallback SVG logo
+│
+├── supabase/
+│   ├── schema.sql                  # Full DB schema (run first)
+│   ├── seed.sql                    # Colleges & programs data
+│   └── seed_v2.sql                 # Updated colleges + pg_cron setup
+│
+├── src/
+│   ├── App.tsx                     # Route configuration
+│   ├── main.tsx                    # Entry point
+│   ├── index.css                   # Global styles + Tailwind
+│   │
+│   ├── types/
+│   │   └── index.ts                # All TypeScript interfaces & constants
+│   │
+│   ├── lib/
+│   │   ├── supabase.ts             # Supabase client initialization
+│   │   └── utils.ts                # Helpers: formatters, validators, CSV export
+│   │
+│   ├── hooks/
+│   │   ├── useAuth.tsx             # Auth context: signIn, signInWithGoogle, signOut
+│   │   └── useStats.ts             # Data hooks: dashboard, logs, visitors, charts
+│   │
+│   ├── components/
+│   │   ├── layout/
+│   │   │   ├── AdminLayout.tsx     # Auth guard + sidebar wrapper
+│   │   │   └── AdminSidebar.tsx    # Navigation sidebar + user profile strip
+│   │   │
+│   │   ├── admin/
+│   │   │   ├── StatsCard.tsx       # Metric display card
+│   │   │   ├── CollegeChart.tsx    # Pie chart — visitors by college
+│   │   │   └── CourseChart.tsx     # Bar chart — visitors by course (abbreviation)
+│   │   │
+│   │   └── visitor/
+│   │       ├── QRCodeDisplay.tsx   # Canvas QR code renderer
+│   │       └── QRScanner.tsx       # Html5Qrcode camera scanner
+│   │
+│   └── pages/
+│       ├── visitor/
+│       │   ├── VisitorHome.tsx     # Main kiosk: QR / Email / Google login
+│       │   ├── RegisterPage.tsx    # Registration form for all visitor types
+│       │   └── WelcomePage.tsx     # Post-checkin confirmation screen
+│       │
+│       └── admin/
+│           ├── AdminLogin.tsx      # Admin sign-in (email + Google)
+│           ├── Dashboard.tsx       # Stats, filters, charts
+│           ├── VisitorLogs.tsx     # Paginated log table + CSV export
+│           └── UserManagement.tsx  # Manage visitors, roles, block/unblock
+│
+├── vercel.json                     # SPA rewrite rule (required for Vercel)
+├── tailwind.config.js              # Custom NEU colors, shadows, animations
+├── vite.config.ts                  # @ path alias
+├── tsconfig.json                   # TypeScript config
+└── README.md                       # This file
 ```
 
-A welcome screen appears.
-
 ---
 
-## Step 3 — Time Out (Leaving the Library)
+## Database Schema
 
-When the student leaves:
+The database is normalized to **Third Normal Form (3NF)**. No transitive dependencies. Each table has a single responsibility.
 
-1. Scan QR code again
-2. The system detects an open session
-3. The student clicks **Confirm Time Out**
-
-The system records:
+### Entity Relationship
 
 ```
-time_out = current time
+auth.users (Supabase managed)
+    │
+    └──► profiles (1:1)
+              id, email, full_name, role
+
+colleges (1:N) ──► programs
+    id                  id
+    name                college_id (FK)
+    abbreviation        name
+                        abbreviation
+
+visitors
+    id
+    email           ◄── unique, @neu.edu.ph only
+    full_name
+    visitor_type    ◄── 'student' | 'faculty' | 'staff'
+    student_number  ◄── students only, nullable
+    program_id      ◄── FK to programs, students only
+    college_id      ◄── FK to colleges, optional for faculty
+    department      ◄── faculty optional
+    job_title       ◄── staff optional
+    qr_data         ◄── encoded string for QR scan
+    is_blocked
+
+visitors (1:N) ──► visit_logs
+                        id
+                        visitor_id  (FK)
+                        purpose     ◄── Reading | Research | Studying | Computer Use
+                        login_method◄── QR Code | Email | Google
+                        time_in
+                        time_out    ◄── null = still inside
+                        duration_minutes
+                        visit_date
 ```
 
-The system calculates the **visit duration**.
+### Tables
+
+| Table | Purpose | Key Columns |
+|-------|---------|-------------|
+| `profiles` | Admin accounts only | `id` = auth.users.id, `role` |
+| `colleges` | NEU college list (16) | `name`, `abbreviation` |
+| `programs` | Academic programs (50+) | `college_id`, `name`, `abbreviation` |
+| `visitors` | All library users | `email`, `visitor_type`, `student_number?` |
+| `visit_logs` | One row per library visit | `visitor_id`, `time_in`, `time_out`, `purpose` |
+
+### Why 3NF?
+
+- **1NF** — All columns are atomic (no repeating groups)
+- **2NF** — No partial dependencies (programs depend on college_id, not a composite key)
+- **3NF** — No transitive dependencies (college name is in `colleges`, not repeated in `programs` or `visitors`)
+
+![alt text](image.png)
 
 ---
 
-# 8. Admin Dashboard
+## User Roles & Access
 
-The admin dashboard provides real-time monitoring of library activity.
+| Role | How to Get It | What They Can Do |
+|------|--------------|------------------|
+| **Admin** | Auto-provisioned for whitelisted emails on first Google login | Full dashboard, stats, filters, user management, CSV export |
+| **Student** | Register at `/register` with student number + college | QR/email/Google check-in at kiosk |
+| **Faculty** | Register at `/register` or auto-register via Google | Google check-in (no employee ID needed) |
+| **Staff** | Register at `/register` or auto-register via Google | Google check-in (no employee ID needed) |
 
-Features include:
+### Admin Whitelist (auto-provisioned)
+```
+jcesperanza@neu.edu.ph
+jomar.auditor@neu.edu.ph
+```
 
-* Total visitors today
-* Visitors this week
-* Visitors this month
-* Visitors this year
-* Students currently inside the library
-
-Charts included:
-
-* **Visitors by College (Pie Chart)**
-* **Visitors by Course (Bar Chart)**
-
-All data updates automatically through **Supabase Realtime**.
-
----
-
-# 9. Visitor Logs
-
-The visitor logs page allows administrators to view all recorded visits.
-
-Columns displayed include:
-
-* Student Name
-* Email
-* Student Number
-* College
-* Course
-* Purpose of Visit
-* Login Method
-* Date
-* Time In
-* Time Out
-* Visit Duration
-
-Administrators can also **export this data to CSV** for reporting purposes.
+### Security Rule
+**Only `@neu.edu.ph` email addresses are allowed.** Non-NEU Google accounts are blocked at the `onAuthStateChange` level — they are signed out immediately after the OAuth callback if their email does not end in `@neu.edu.ph`.
 
 ---
 
-# 10. User Management
+## User Experience Flows
 
-Administrators can manage student access through the **User Management page**.
+### Visitor Check-In (QR Code)
+```
+Kiosk (/) → Scan QR Code tab → Start Scanner
+→ Point camera at QR → System verifies email + student number
+→ If first visit of the day → Choose Purpose → Time In recorded
+→ Welcome to NEU Library! screen (3 second redirect)
+```
 
-Functions include:
+### Visitor Check-In (Email)
+```
+Kiosk (/) → Email tab → Enter @neu.edu.ph email
+→ Students: also enter student number
+→ Faculty/Staff: email only
+→ System finds visitor record → Choose Purpose → Time In
+→ Welcome to NEU Library! screen
+```
 
-* Viewing all registered students
-* Blocking students from entering the library
-* Unblocking student access
+### Visitor Check-Out
+```
+Same flow as check-in → System detects open session
+→ Shows Time In time → Confirm Time Out
+→ Duration calculated automatically
+→ Thank You! screen
+```
 
-If a student is blocked, they cannot check in using the system.
+### Google Sign-In (First Time)
+```
+Kiosk (/) → Google tab → Sign in with Google (@neu.edu.ph only)
+→ If Student → Redirected to /register to complete profile
+→ If Faculty → One-click auto-register → immediately check in
+→ If Staff → One-click auto-register → immediately check in
+```
 
----
+### Google Sign-In (Returning)
+```
+Kiosk (/) → Google tab → Sign in with Google
+→ System finds visitor by email → Proceed to Time In / Time Out
+```
 
-# 11. CSV Reports
+### Admin Login (as Admin)
+```
+/admin/login → Sign in with Google (jcesperanza@neu.edu.ph)
+→ Auto-provisioned as admin → Full dashboard
+```
 
-The system allows administrators to export visitor data.
+### Admin Login (as Visitor)
+```
+Kiosk (/) → Google tab → Sign in with admin email
+→ System checks visitors table (not profiles)
+→ Proceeds as a regular visitor check-in
+→ Admin can use the library just like any other person
+```
 
-CSV reports include:
-
-* Student Name
-* Email
-* Student Number
-* College
-* Course
-* Visit Purpose
-* Login Method
-* Date
-* Time In
-* Time Out
-* Visit Duration
-
-These reports can be used for **library analytics and official reporting**.
-
----
-
-# 12. Security
-
-The system uses Supabase security features including:
-
-* Authentication for admin accounts
-* Row Level Security (RLS) policies
-* Controlled database access using API keys
-
-Public users cannot access admin pages without authentication.
-
----
-
-# 13. Deployment
-
-The system can be deployed using modern hosting platforms such as **Vercel**.
-
-Deployment steps typically include:
-
-1. Building the project
-2. Uploading to the hosting platform
-3. Adding environment variables
-4. Deploying the application
-
----
-
-# 14. Purpose of the System
-
-The main goal of this project is to:
-
-* Digitize the library visitor logbook
-* Improve monitoring of library usage
-* Provide real-time visitor analytics
-* Reduce manual record keeping
-* Improve data accuracy for library reports
+### Auto 6PM Timeout
+```
+pg_cron job runs at 10:00 UTC (= 18:00 PHT)
+→ All visit_logs with time_out = NULL are automatically closed
+→ duration_minutes calculated from time_in to 6PM
+```
 
 ---
 
-# 15. Developer
+## Features
 
-**Jomar A. Auditor**
-Bachelor of Science in Information Technology (BSIT)
-New Era University
+### Visitor Portal
+- QR code scan using device camera (back camera preferred on mobile)
+- Email login (student number optional for faculty/staff)
+- Google OAuth login (NEU accounts only)
+- Purpose selection: Reading, Research, Studying, Computer Use
+- Time In / Time Out with automatic duration calculation
+- Automatic 6PM timeout (via pg_cron)
+- Registration for all visitor types (Student, Faculty, Staff)
+- QR code download as PNG
+
+### Admin Dashboard
+- Visitor statistics: Today / This Week / Custom Date Range
+- Displayed in stat cards (no emojis — professional icons)
+- **Filter by Reason for Visit** (Reading, Research, Studying, Computer Use)
+- **Filter by College** (all 16 NEU colleges with abbreviations)
+- **Filter by Visitor Type** (Student, Faculty/Teacher, Staff/Employee)
+- Currently Inside live counter (updates every 30 seconds)
+- Purpose breakdown cards with click-to-filter
+- Visitors by College — pie chart
+- Visitors by Course — bar chart with abbreviations
+- Export all filtered data to CSV
+
+### User Management
+- View all registered visitors
+- Change visitor type (Student / Faculty / Staff) via dropdown
+- Block / Unblock library access
+- Promote visitor to admin
+- Revoke admin access
+- View all current admin accounts
 
 ---
 
-# 16. License
+## Environment Variables
 
-This project was developed for academic and institutional use at **New Era University Library**.
+Create `.env` in the project root:
+
+```env
+VITE_SUPABASE_URL=https://YOUR_PROJECT_ID.supabase.co
+VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
+```
+
+Get these from: Supabase Dashboard → Project Settings → API
+
+---
+
+## Local Development
+
+```bash
+# 1. Install dependencies
+npm install
+npm install -D @types/node
+
+# 2. Create .env file with your Supabase credentials
+
+# 3. Run the database setup in Supabase SQL Editor:
+#    First: supabase/schema.sql
+#    Then:  supabase/seed_v2.sql
+
+# 4. Start development server
+npm run dev
+
+# 5. Open http://localhost:5173
+```
+
+---
+
+## Deployment
+
+```bash
+# Stage all changes
+git add .
+
+# Commit with descriptive message
+git commit -m "feat: complete NEU Library Visitor Log System"
+
+# Push to GitHub (Vercel auto-deploys on push)
+git push origin main
+```
+
+### Vercel Setup (first time only)
+1. Connect GitHub repo to Vercel
+2. Add environment variables in Vercel Dashboard → Project → Settings → Environment Variables:
+   - `VITE_SUPABASE_URL`
+   - `VITE_SUPABASE_ANON_KEY`
+3. Vercel auto-detects Vite — no build config needed
+4. `vercel.json` handles the SPA rewrite rule (prevents white screen on direct URL access)
+
+### Supabase Setup (first time only)
+1. Run `schema.sql` in SQL Editor
+2. Run `seed_v2.sql` in SQL Editor
+3. Authentication → Providers → Google → Enable with Client ID and Secret
+4. Authentication → URL Configuration → Add redirect URLs:
+   ```
+   https://neu-library-visitor-log.vercel.app/admin/login
+   https://neu-library-visitor-log.vercel.app/
+   http://localhost:5173/admin/login
+   http://localhost:5173/
+   ```
+5. Enable pg_cron extension: Database → Extensions → pg_cron → Enable
+
+---
+
+## Security
+
+| Concern | Implementation |
+|---------|---------------|
+| Email restriction | Only `@neu.edu.ph` addresses accepted. Enforced in `useAuth.tsx` at `onAuthStateChange` — non-NEU accounts are signed out immediately |
+| Admin access | Role stored in `profiles` table. `AdminLayout.tsx` checks role before rendering any admin page |
+| Row Level Security | All tables use Supabase RLS. Visitors can only insert/read. Only admins can update visitor records |
+| Route protection | `/admin/*` routes are wrapped in `AdminLayout` which redirects unauthenticated users to `/admin/login` |
+| QR code encoding | QR data is `email|studentnumber` — not personally identifiable without the system |
+| HTTPS | Enforced by Vercel and Supabase |
+
+---
+
+## License
+
+New Era University — College of Informatics and Computing Studies
+Academic Project — Library Visitor Log System — 2026
