@@ -10,8 +10,6 @@ const ADMIN_EMAILS = [
   'jcesperanza@neu.edu.ph',
   'jomar.auditor@neu.edu.ph',
   'jan-neo.gloria@neu.edu.ph',
-  'rene.espina@neu.edu.ph',
-  'trixianwackyll.granado@neu.edu.ph',
 ];
 
 interface AuthCtx {
