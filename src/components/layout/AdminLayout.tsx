@@ -1,41 +1,54 @@
-import { ReactNode, useEffect, useRef } from 'react';
-import { Navigate, useNavigate }        from 'react-router-dom';
-import { Loader2 }                      from 'lucide-react';
-import { AdminSidebar }                 from './AdminSidebar';
-import { useAuth }                      from '@/hooks/useAuth';
+// src/components/layout/AdminLayout.tsx
+// Only the 5 authorized admin emails can access the dashboard.
+// Tab switching never triggers a logout — loading is true ONLY on first load.
+import { ReactNode } from 'react';
+import { Navigate } from 'react-router-dom';
+import { Loader2 }  from 'lucide-react';
+import { AdminSidebar } from './AdminSidebar';
+import { useAuth }      from '@/hooks/useAuth';
+
+const AUTHORIZED_ADMINS = [
+  'jcesperanza@neu.edu.ph',
+  'jomar.auditor@neu.edu.ph',
+  'jan-neo.gloria@neu.edu.ph',
+  'rene.espina@neu.edu.ph',
+  'trixianwackyll.granado@neu.edu.ph',
+];
 
 export function AdminLayout({ children }: { children: ReactNode }) {
-  const { user, profile, loading, profileReady } = useAuth();
-  const navigate = useNavigate();
-  const timer    = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { user, profile, loading } = useAuth();
 
-  // Safety: redirect to login after 6s if still loading
-  useEffect(() => {
-    if (loading || !profileReady) {
-      timer.current = setTimeout(() => navigate('/admin/login', { replace: true }), 6000);
-    } else {
-      if (timer.current) { clearTimeout(timer.current); timer.current = null; }
-    }
-    return () => { if (timer.current) clearTimeout(timer.current); };
-  }, [loading, profileReady, navigate]);
-
-  if (loading || !profileReady) {
+  // Show spinner only on very first session check (never on tab switch)
+  if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-neu-gray">
+      <div className="min-h-screen flex items-center justify-center bg-slate-50">
         <div className="text-center">
-          <Loader2 size={26} className="animate-spin text-neu-blue mx-auto mb-3" />
-          <p className="text-xs text-slate-400 font-medium">Loading…</p>
+          <Loader2 size={28} className="animate-spin text-blue-600 mx-auto mb-3" />
+          <p className="text-xs text-slate-400 font-medium">Loading dashboard…</p>
         </div>
       </div>
     );
   }
 
-  if (!user)    return <Navigate to="/admin/login" replace />;
+  // Not signed in at all
+  if (!user) return <Navigate to="/admin/login" replace />;
+
+  // Signed in but email not in admin whitelist
+  const emailLower = user.email?.toLowerCase() ?? '';
+  if (!AUTHORIZED_ADMINS.includes(emailLower)) {
+    return <Navigate to="/admin/login" replace />;
+  }
+
+  // Signed in with authorized email but no profile row yet (edge case)
   if (!profile) return <Navigate to="/admin/login" replace />;
-  if (profile.role !== 'admin' && profile.role !== 'staff') return <Navigate to="/" replace />;
+
+  // Role check
+  if (profile.role !== 'admin' && profile.role !== 'staff') {
+    return <Navigate to="/admin/login" replace />;
+  }
 
   return (
-    <div className="min-h-screen bg-neu-gray flex">
+    <div className="min-h-screen bg-slate-50 flex">
       <AdminSidebar />
       <main className="flex-1 lg:ml-64 min-h-screen overflow-y-auto">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">

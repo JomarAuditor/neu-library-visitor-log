@@ -1,69 +1,57 @@
 // src/hooks/useAuth.tsx
-// SECURITY: Only @neu.edu.ph emails are allowed.
-// Non-NEU Google accounts are blocked at the auth state change level.
-
-import {
-  createContext, useContext, useEffect,
-  useState, useRef, ReactNode,
-} from 'react';
+import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import { User, Session } from '@supabase/supabase-js';
 import { supabase }      from '@/lib/supabase';
 import { Profile }       from '@/types';
 import { isNEUEmail }    from '@/lib/utils';
 
-// Admin whitelist — these emails are auto-provisioned as admin on first Google login
+// ── Authorized admin emails ───────────────────────────────────────────
 const ADMIN_EMAILS = [
   'jcesperanza@neu.edu.ph',
   'jomar.auditor@neu.edu.ph',
+  'jan-neo.gloria@neu.edu.ph',
+  'rene.espina@neu.edu.ph',
+  'trixianwackyll.granado@neu.edu.ph',
 ];
 
 interface AuthCtx {
-  user:         User    | null;
-  session:      Session | null;
-  profile:      Profile | null;
-  loading:      boolean;
-  profileReady: boolean;
-  isAdmin:      boolean;
-  signIn:           (email: string, password: string) => Promise<{ error: string | null }>;
-  signInWithGoogle: (redirectPath?: string)           => Promise<{ error: string | null }>;
-  signOut:          ()                                => Promise<void>;
-  refreshProfile:   ()                                => Promise<void>;
+  user:             User    | null;
+  session:          Session | null;
+  profile:          Profile | null;
+  loading:          boolean;
+  profileReady:     boolean;
+  isAdmin:          boolean;
+  signInWithGoogle: (redirectPath?: string) => Promise<{ error: string | null }>;
+  signOut:          ()                      => Promise<void>;
+  refreshProfile:   ()                      => Promise<void>;
 }
 
 const AuthContext = createContext<AuthCtx | undefined>(undefined);
 
-async function provisionAdminIfNeeded(user: User): Promise<Profile | null> {
+async function fetchOrProvisionProfile(user: User): Promise<Profile | null> {
   const email = user.email?.toLowerCase() ?? '';
-
-  // Check existing profile
-  const { data: existing } = await supabase
-    .from('profiles')
-    .select('id, email, full_name, role, created_at')
-    .eq('id', user.id)
-    .maybeSingle();
-
-  if (existing) return existing as Profile;
-
-  // Only create profiles for whitelisted admin emails
-  if (!ADMIN_EMAILS.includes(email)) return null;
-
-  const fullName = user.user_metadata?.full_name
-    ?? user.user_metadata?.name
-    ?? email.split('@')[0];
 
   const { data } = await supabase
     .from('profiles')
-    .upsert({
-      id:         user.id,
-      email,
-      full_name:  fullName,
-      role:       'admin',
-      created_at: new Date().toISOString(),
-    }, { onConflict: 'id' })
-    .select('id, email, full_name, role, created_at')
+    .select('id,email,full_name,role,created_at')
+    .eq('id', user.id)
+    .maybeSingle();
+  if (data) return data as Profile;
+
+  if (!ADMIN_EMAILS.includes(email)) return null;
+
+  const fullName =
+    user.user_metadata?.full_name ??
+    user.user_metadata?.name ??
+    email.split('@')[0];
+
+  const { data: created } = await supabase
+    .from('profiles')
+    .upsert({ id: user.id, email, full_name: fullName, role: 'admin' }, { onConflict: 'id' })
+    .select('id,email,full_name,role,created_at')
     .single();
 
-  return (data as Profile) ?? null;
+  return (created as Profile) ?? null;
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -72,82 +60,53 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [profile,      setProfile]      = useState<Profile | null>(null);
   const [loading,      setLoading]      = useState(true);
   const [profileReady, setProfileReady] = useState(false);
-  const safety = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const loadProfile = async (u: User): Promise<void> => {
+  const handleUser = async (u: User | null, mounted: { v: boolean }) => {
+    if (!u) {
+      setUser(null); setSession(null); setProfile(null);
+      setLoading(false); setProfileReady(true);
+      return;
+    }
+
+    if (!isNEUEmail(u.email)) {
+      await supabase.auth.signOut();
+      setUser(null); setSession(null); setProfile(null);
+      setLoading(false); setProfileReady(true);
+      return;
+    }
+
+    if (!mounted.v) return;
+    setUser(u);
+
     try {
-      // ENFORCE: Only @neu.edu.ph emails allowed
-      if (!isNEUEmail(u.email)) {
-        // Sign out the non-NEU user immediately
-        await supabase.auth.signOut();
-        setUser(null);
-        setSession(null);
-        setProfile(null);
-        return;
-      }
-      const p = await provisionAdminIfNeeded(u);
-      setProfile(p);
+      const p = await fetchOrProvisionProfile(u);
+      if (mounted.v) setProfile(p);
     } catch {
-      setProfile(null);
+      if (mounted.v) setProfile(null);
     } finally {
-      setProfileReady(true);
+      if (mounted.v) { setLoading(false); setProfileReady(true); }
     }
   };
 
   useEffect(() => {
-    let mounted = true;
-
-    safety.current = setTimeout(() => {
-      if (mounted) { setLoading(false); setProfileReady(true); }
-    }, 6000);
+    const mounted = { v: true };
 
     supabase.auth.getSession().then(({ data: { session: s } }) => {
-      if (!mounted) return;
+      if (!mounted.v) return;
       setSession(s);
-      setUser(s?.user ?? null);
-      if (s?.user) {
-        loadProfile(s.user).finally(() => { if (mounted) setLoading(false); });
-      } else {
-        setLoading(false);
-        setProfileReady(true);
-      }
+      handleUser(s?.user ?? null, mounted);
     });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (_event, s) => {
-        if (!mounted) return;
-        setSession(s);
-        setUser(s?.user ?? null);
-        if (s?.user) {
-          setProfileReady(false);
-          await loadProfile(s.user);
-        } else {
-          setProfile(null);
-          setProfileReady(true);
-        }
-        setLoading(false);
-      }
-    );
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, s) => {
+      if (!mounted.v) return;
+      setSession(s);
+      // Do NOT set loading=true here — this is the fix for tab-switch logout
+      handleUser(s?.user ?? null, mounted);
+    });
 
-    return () => {
-      mounted = false;
-      subscription.unsubscribe();
-      if (safety.current) clearTimeout(safety.current);
-    };
+    return () => { mounted.v = false; subscription.unsubscribe(); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  const signIn = async (email: string, password: string): Promise<{ error: string | null }> => {
-    // Block non-NEU emails at the UI level too
-    if (!isNEUEmail(email)) {
-      return { error: 'Only @neu.edu.ph email addresses are allowed.' };
-    }
-    try {
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
-      return { error: error?.message ?? null };
-    } catch (e: any) {
-      return { error: e?.message ?? 'Sign in failed.' };
-    }
-  };
 
   const signInWithGoogle = async (redirectPath = '/admin/login'): Promise<{ error: string | null }> => {
     try {
@@ -156,31 +115,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         options: {
           redirectTo: `${window.location.origin}${redirectPath}`,
           queryParams: { access_type: 'offline', prompt: 'consent' },
-          // Note: Google OAuth will allow any Google account to attempt sign-in.
-          // Non-NEU accounts are blocked in the onAuthStateChange handler above
-          // which signs them out immediately after the OAuth callback.
         },
       });
       return { error: error?.message ?? null };
-    } catch (e: any) {
-      return { error: e?.message ?? 'Google sign-in failed.' };
+    } catch (e: unknown) {
+      return { error: (e as Error)?.message ?? 'Google sign-in failed.' };
     }
   };
 
-  const signOut = async (): Promise<void> => {
+  const signOut = async () => {
     await supabase.auth.signOut();
     setUser(null); setSession(null); setProfile(null); setProfileReady(false);
   };
 
-  const refreshProfile = async (): Promise<void> => {
-    if (user) await loadProfile(user);
+  const refreshProfile = async () => {
+    if (user) await handleUser(user, { v: true });
   };
 
   return (
     <AuthContext.Provider value={{
       user, session, profile, loading, profileReady,
-      isAdmin: profile?.role === 'admin' || profile?.role === 'staff',
-      signIn, signInWithGoogle, signOut, refreshProfile,
+      isAdmin: ADMIN_EMAILS.includes(user?.email?.toLowerCase() ?? '') && !!profile,
+      signInWithGoogle, signOut, refreshProfile,
     }}>
       {children}
     </AuthContext.Provider>

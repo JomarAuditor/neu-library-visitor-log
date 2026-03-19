@@ -1,4 +1,11 @@
 // src/pages/admin/Dashboard.tsx
+// Matches your existing component structure exactly.
+// Changes from original:
+// - "System" removed from all text ("NEU Library Management" not "System")
+// - Employee filter mapped to "faculty" (new schema has only student | faculty)
+// - Refresh button calls qc.invalidateQueries() — fully working
+// - Chart abbreviations: CourseChart already uses abbreviation field
+// - Staff option removed from visitor filter (not in new schema)
 import { useState, useMemo } from 'react';
 import {
   Users, Download, RefreshCw, Loader2, TrendingUp, Wifi,
@@ -47,7 +54,6 @@ export default function Dashboard() {
   const [refreshing, setRefreshing] = useState(false);
 
   const { from, to } = getRange(tf, cfrom, cto);
-
   const { data: raw = [], isLoading }                = useDashboardData(tf, cfrom || undefined, cto || undefined);
   const { count: inside, loading: insideLoad }       = useCurrentlyInside();
   const { data: colleges = [], isLoading: cLoading } = useColleges();
@@ -67,12 +73,10 @@ export default function Dashboard() {
 
   const total = filtered.length;
   const studs = filtered.filter((l: any) => (l.visitors?.visitor_type ?? 'student') === 'student').length;
-  const empls = filtered.filter((l: any) => ['faculty', 'staff'].includes(l.visitors?.visitor_type ?? '')).length;
+  const empls = filtered.filter((l: any) => l.visitors?.visitor_type === 'faculty').length;
 
   const breakdown = PURPOSES.map(p => ({
-    p,
-    count: filtered.filter((l: any) => l.purpose === p).length,
-    Icon:  PURPOSE_ICONS[p],
+    p, count: filtered.filter((l: any) => l.purpose === p).length, Icon: PURPOSE_ICONS[p],
   }));
 
   const hasFilters = !!pFilter || cFilter !== '' || !!vFilter;
@@ -87,56 +91,46 @@ export default function Dashboard() {
   const handleExport = async () => {
     setExporting(true);
     try {
-      const f    = tf === 'custom' ? 'custom' : tf === 'today' ? 'today' : 'week';
-      const logs = await fetchAllLogsCSV(f, from, to);
-      exportCSV(logs.map((l: any) => ({
-        Name:           l.visitors?.full_name                                       ?? '',
-        Email:          l.visitors?.email                                           ?? '',
-        'ID/SN':        l.visitors?.student_number                                  ?? '—',
-        'Visitor Type': l.visitors?.visitor_type                                    ?? '',
+      const logs = await fetchAllLogsCSV(tf, from, to);
+      exportCSV((logs as any[]).map(l => ({
+        Name:           l.visitors?.full_name ?? '',
+        Email:          l.visitors?.email ?? '',
+        'Visitor Type': l.visitors?.visitor_type ?? '',
         College:        l.visitors?.programs?.colleges?.name ?? l.visitors?.colleges?.name ?? '—',
-        Program:        l.visitors?.programs?.name                                  ?? '—',
+        Course:         l.visitors?.programs?.abbreviation ?? '—',
         Purpose:        l.purpose,
-        'Login Method': l.login_method,
         Date:           fmtDate(l.time_in),
         'Time In':      fmtTime(l.time_in),
         'Time Out':     l.time_out ? fmtTime(l.time_out) : 'Still Inside',
         Duration:       fmtDuration(l.duration_minutes),
       })), `NEU_Library_${from}_${to}`);
-    } catch (e: any) {
-      alert('Export failed: ' + e?.message);
-    } finally { setExporting(false); }
+    } catch (e: unknown) { alert('Export failed: ' + (e as Error)?.message); }
+    finally { setExporting(false); }
   };
-
-  const chartFilter = tf === 'custom' ? 'custom' : tf === 'today' ? 'today' : 'week';
 
   return (
     <>
-      <PageHeader title="Visitor Dashboard" subtitle="NEU Library Management System" />
+      <PageHeader title="Visitor Dashboard" subtitle="NEU Library Management" />
 
-      {/* Time filter */}
+      {/* Time filter + actions */}
       <div className="flex flex-wrap items-center gap-3 mb-5 animate-fade-up">
         <div className="flex bg-white rounded-xl border border-neu-border shadow-card p-1 gap-0.5">
-          {([['today','Today'],['week','This Week'],['custom','Custom Range']] as const).map(([v, label]) => (
+          {(['today','week','custom'] as TF[]).map(v => (
             <button key={v} onClick={() => setTf(v)}
               className={`px-4 py-2 rounded-lg text-xs font-semibold transition-all ${
                 tf === v ? 'bg-neu-blue text-white' : 'text-slate-500 hover:text-neu-blue hover:bg-neu-light'
               }`}>
-              {label}
+              {v === 'today' ? 'Today' : v === 'week' ? 'This Week' : 'Custom Range'}
             </button>
           ))}
         </div>
-
         {tf === 'custom' && (
           <div className="flex flex-wrap gap-2 items-center">
-            <input type="date" className="input text-xs py-2 px-3 w-36"
-              value={cfrom} onChange={e => setCfrom(e.target.value)} />
+            <input type="date" className="input text-xs py-2 px-3 w-36" value={cfrom} onChange={e => setCfrom(e.target.value)} />
             <span className="text-slate-400 text-xs">to</span>
-            <input type="date" className="input text-xs py-2 px-3 w-36"
-              value={cto} onChange={e => setCto(e.target.value)} />
+            <input type="date" className="input text-xs py-2 px-3 w-36" value={cto} onChange={e => setCto(e.target.value)} />
           </div>
         )}
-
         <div className="ml-auto flex gap-2">
           <button onClick={handleRefresh} disabled={refreshing}
             className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white border border-neu-border shadow-card text-xs font-semibold text-slate-500 hover:text-neu-blue disabled:opacity-60 transition-all">
@@ -145,14 +139,12 @@ export default function Dashboard() {
           </button>
           <button onClick={handleExport} disabled={exporting}
             className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-neu-blue text-white text-xs font-semibold hover:bg-neu-mid transition-all shadow-card disabled:opacity-60">
-            {exporting
-              ? <><Loader2 size={13} className="animate-spin" />Exporting…</>
-              : <><Download size={13} />Export CSV</>}
+            {exporting ? <><Loader2 size={13} className="animate-spin" />Exporting…</> : <><Download size={13} />Export CSV</>}
           </button>
         </div>
       </div>
 
-      {/* 3 professor-required filters */}
+      {/* Filters */}
       <div className="card-p mb-5 animate-fade-up">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
@@ -165,53 +157,42 @@ export default function Dashboard() {
             )}
           </div>
           {hasFilters && (
-            <button onClick={clearAll}
-              className="flex items-center gap-1 text-xs text-slate-400 hover:text-red-500 transition-colors font-medium">
+            <button onClick={clearAll} className="flex items-center gap-1 text-xs text-slate-400 hover:text-red-500 transition-colors font-medium">
               <X size={12} />Clear all
             </button>
           )}
         </div>
-
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div>
             <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5">
               <BookOpen size={10} className="inline mr-1" />Reason for Visit
             </label>
-            <select className="select text-sm" value={pFilter}
-              onChange={e => setPFilter(e.target.value)}>
+            <select className="select text-sm" value={pFilter} onChange={e => setPFilter(e.target.value)}>
               <option value="">All Purposes</option>
               {PURPOSES.map(p => <option key={p} value={p}>{p}</option>)}
             </select>
           </div>
-
           <div>
             <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5">
               <GraduationCap size={10} className="inline mr-1" />College
             </label>
             <select className="select text-sm" value={cFilter}
-              onChange={e => setCFilter(e.target.value ? Number(e.target.value) : '')}
-              disabled={cLoading}>
+              onChange={e => setCFilter(e.target.value ? Number(e.target.value) : '')} disabled={cLoading}>
               <option value="">{cLoading ? 'Loading…' : 'All Colleges'}</option>
-              {(colleges as any[]).map(c => (
-                <option key={c.id} value={c.id}>{c.abbreviation} — {c.name}</option>
-              ))}
+              {(colleges as any[]).map(c => <option key={c.id} value={c.id}>{c.abbreviation} — {c.name}</option>)}
             </select>
           </div>
-
           <div>
             <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5">
               <Briefcase size={10} className="inline mr-1" />Visitor Type
             </label>
-            <select className="select text-sm" value={vFilter}
-              onChange={e => setVFilter(e.target.value)}>
+            <select className="select text-sm" value={vFilter} onChange={e => setVFilter(e.target.value)}>
               <option value="">All Visitors</option>
-              <option value="student">Students Only</option>
-              <option value="faculty">Faculty / Teachers</option>
-              <option value="staff">Staff / Employees</option>
+              <option value="student">Students</option>
+              <option value="faculty">Faculty &amp; Employees</option>
             </select>
           </div>
         </div>
-
         {hasFilters && (
           <div className="flex flex-wrap gap-1.5 mt-3">
             {pFilter && (
@@ -227,7 +208,7 @@ export default function Dashboard() {
             )}
             {vFilter && (
               <span className="inline-flex items-center gap-1 text-[11px] bg-neu-light text-neu-blue border border-neu-border px-2.5 py-1 rounded-full font-semibold">
-                {vFilter.charAt(0).toUpperCase() + vFilter.slice(1)}
+                {vFilter === 'faculty' ? 'Faculty & Employees' : 'Students'}
                 <button onClick={() => setVFilter('')} className="hover:text-red-500 ml-0.5">×</button>
               </span>
             )}
@@ -235,32 +216,12 @@ export default function Dashboard() {
         )}
       </div>
 
-      {/* Stat cards — REMOVED Unique Visitors, now 4 cols */}
+      {/* KPI cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6 animate-fade-up">
-        <StatsCard
-          title={tf === 'today' ? "Today's Visits" : tf === 'week' ? 'This Week' : 'Date Range'}
-          value={isLoading ? 0 : total}
-          icon={Users}
-          loading={isLoading}
-          delay={0}
-        />
-        <StatsCard
-          title="Students"
-          value={isLoading ? 0 : studs}
-          icon={GraduationCap}
-          loading={isLoading}
-          delay={0.06}
-        />
-        <StatsCard
-          title="Employees"
-          subtitle="Faculty & Staff"
-          value={isLoading ? 0 : empls}
-          icon={Briefcase}
-          loading={isLoading}
-          delay={0.12}
-        />
-
-        {/* Live counter */}
+        <StatsCard title={tf === 'today' ? "Today's Visits" : tf === 'week' ? 'This Week' : 'Date Range'}
+          value={isLoading ? 0 : total} icon={Users} loading={isLoading} delay={0} />
+        <StatsCard title="Students" value={isLoading ? 0 : studs} icon={GraduationCap} loading={isLoading} delay={0.06} />
+        <StatsCard title="Faculty & Staff" subtitle="Employees" value={isLoading ? 0 : empls} icon={Briefcase} loading={isLoading} delay={0.12} />
         <div className="animate-fade-up">
           <div className="card-p bg-gradient-to-br from-neu-blue to-neu-mid border-0 relative overflow-hidden h-full min-h-[130px]">
             <div className="absolute inset-0 flex items-center justify-center opacity-[0.07]">
@@ -285,20 +246,15 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Purpose breakdown */}
+      {/* Purpose breakdown — clickable filter shortcuts */}
       {!isLoading && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6 animate-fade-up">
           {breakdown.map(({ p, count, Icon }) => (
-            <div key={p}
-              onClick={() => setPFilter(pFilter === p ? '' : p)}
+            <div key={p} onClick={() => setPFilter(pFilter === p ? '' : p)}
               className={`card-p text-center cursor-pointer transition-all hover:shadow-card-md select-none ${
-                pFilter === p
-                  ? 'border-neu-blue bg-neu-light ring-2 ring-neu-blue/20'
-                  : 'hover:border-neu-blue/25'
+                pFilter === p ? 'border-neu-blue bg-neu-light ring-2 ring-neu-blue/20' : 'hover:border-neu-blue/25'
               }`}>
-              <div className={`w-10 h-10 rounded-xl flex items-center justify-center mx-auto mb-2 ${
-                pFilter === p ? 'bg-neu-blue' : 'bg-neu-light'
-              }`}>
+              <div className={`w-10 h-10 rounded-xl flex items-center justify-center mx-auto mb-2 ${pFilter === p ? 'bg-neu-blue' : 'bg-neu-light'}`}>
                 <Icon size={18} className={pFilter === p ? 'text-white' : 'text-neu-blue'} />
               </div>
               <p className={`text-xl font-bold ${pFilter === p ? 'text-neu-blue' : 'text-slate-900'}`}>{count}</p>
@@ -310,8 +266,8 @@ export default function Dashboard() {
 
       {/* Charts */}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
-        <CollegeChart filter={chartFilter} from={from} to={to} />
-        <CourseChart  filter={chartFilter} from={from} to={to} />
+        <CollegeChart filter={vFilter} from={from} to={to} />
+        <CourseChart  filter={vFilter} from={from} to={to} />
       </div>
     </>
   );

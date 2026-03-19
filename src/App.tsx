@@ -1,18 +1,44 @@
 import { BrowserRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import { QueryClient, QueryClientProvider }               from '@tanstack/react-query';
-import { AuthProvider }                                    from '@/hooks/useAuth';
-import { AdminLayout }                                     from '@/components/layout/AdminLayout';
+import { AuthProvider }    from '@/hooks/useAuth';
+import { AdminLayout }     from '@/components/layout/AdminLayout';
 
-import VisitorHome     from '@/pages/visitor/VisitorHome';
-import RegisterPage    from '@/pages/visitor/RegisterPage';
-import WelcomePage     from '@/pages/visitor/WelcomePage';
-import AdminLogin      from '@/pages/admin/AdminLogin';
-import Dashboard       from '@/pages/admin/Dashboard';
-import VisitorLogs     from '@/pages/admin/VisitorLogs';
-import UserManagement  from '@/pages/admin/UserManagement';
+import VisitorHome    from '@/pages/visitor/VisitorHome';
+import RegisterPage   from '@/pages/visitor/RegisterPage';
+import AdminLogin     from '@/pages/admin/AdminLogin';
+import Dashboard      from '@/pages/admin/Dashboard';
+import VisitorLogs    from '@/pages/admin/VisitorLogs';
+import UserManagement from '@/pages/admin/UserManagement';
 
+// Preload colleges + programs on app startup — no "Loading..." in registration form
 const qc = new QueryClient({
-  defaultOptions: { queries: { retry: 1, staleTime: 30_000 } },
+  defaultOptions: {
+    queries: {
+      retry:         1,
+      staleTime:     30_000,
+      refetchOnWindowFocus: false,  // KEY: prevents re-fetching (and flickering) on tab switch
+    },
+  },
+});
+
+// Kick off prefetch immediately
+qc.prefetchQuery({
+  queryKey: ['colleges'],
+  queryFn:  async () => {
+    const { supabase } = await import('@/lib/supabase');
+    const { data } = await supabase.from('colleges').select('id,name,abbreviation').order('name');
+    return data ?? [];
+  },
+  staleTime: Infinity,
+});
+qc.prefetchQuery({
+  queryKey: ['all-programs'],
+  queryFn:  async () => {
+    const { supabase } = await import('@/lib/supabase');
+    const { data } = await supabase.from('programs').select('id,college_id,name,abbreviation').order('name');
+    return data ?? [];
+  },
+  staleTime: Infinity,
 });
 
 export default function App() {
@@ -21,12 +47,11 @@ export default function App() {
       <AuthProvider>
         <BrowserRouter>
           <Routes>
-            {/* Visitor routes */}
-            <Route path="/"         element={<VisitorHome />}  />
-            <Route path="/register" element={<RegisterPage />} />
-            <Route path="/welcome"  element={<WelcomePage />}  />
+            {/* Visitor */}
+            <Route path="/"          element={<VisitorHome />}  />
+            <Route path="/register"  element={<RegisterPage />} />
 
-            {/* Admin login — STANDALONE (never inside AdminLayout) */}
+            {/* Admin login — standalone, never inside AdminLayout */}
             <Route path="/admin/login" element={<AdminLogin />} />
 
             {/* Protected admin routes */}
