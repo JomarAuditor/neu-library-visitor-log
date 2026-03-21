@@ -1,20 +1,45 @@
 // src/pages/visitor/VisitorHome.tsx
-// Changes: background image (Neu-Lib_Building.jpg) with color overlay,
-//          professional warm messages, no "System", @neu.edu.ph restriction with clear warning,
-//          auto time-in / time-out, instant UI (no blocking loader)
-import { useState, useEffect } from 'react';
+// Enterprise-grade visitor authentication with enhanced security feedback
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Loader2, LogIn, CheckCircle, Clock } from 'lucide-react';
-import { supabase }      from '@/lib/supabase';
-import { useAuth }       from '@/hooks/useAuth';
+import {
+  Loader2, Clock, ShieldAlert, XCircle,
+} from 'lucide-react';
+import { supabase }  from '@/lib/supabase';
+import { useAuth }   from '@/hooks/useAuth';
 import { PURPOSES, VisitPurpose, PURPOSE_EMOJI } from '@/types';
-import { calcDurationMinutes, fmtDuration }      from '@/lib/utils';
+import { calcDurationMinutes, fmtDuration } from '@/lib/utils';
+import { sanitizeName, sanitizeEmail, authRateLimiter, secureLog } from '@/lib/security';
 
-type Phase = 'idle' | 'checking' | 'select-purpose' | 'timing-in' | 'timing-out' | 'done-in' | 'done-out' | 'error';
+type Phase =
+  | 'idle'
+  | 'checking'
+  | 'select-purpose'
+  | 'working'
+  | 'error';
 
-function GoogleIcon() {
+// ── Manila clock ──────────────────────────────────────────────────────
+function useManilaTime() {
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => tick(n => n + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const m = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Manila' }));
+  return {
+    hh:  String(m.getHours() % 12 || 12).padStart(2, '0'),
+    mm:  String(m.getMinutes()).padStart(2, '0'),
+    ss:  String(m.getSeconds()).padStart(2, '0'),
+    ap:  m.getHours() >= 12 ? 'PM' : 'AM',
+    day: m.toLocaleDateString('en-PH', {
+      weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+    }),
+  };
+}
+
+function GoogleIcon({ size = 20 }: { size?: number }) {
   return (
-    <svg width="20" height="20" viewBox="0 0 48 48" aria-hidden="true">
+    <svg width={size} height={size} viewBox="0 0 48 48" aria-hidden>
       <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
       <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
       <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
@@ -23,45 +48,110 @@ function GoogleIcon() {
   );
 }
 
+// ── Block popup ───────────────────────────────────────────────────────
+function BlockPopup({ message, onDismiss }: { message: string; onDismiss: () => void }) {
+  const isSuspended = message.toLowerCase().includes('suspended') || message.toLowerCase().includes('blocked');
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: 'rgba(0,0,0,0.72)', backdropFilter: 'blur(8px)' }}
+    >
+      <div className="w-full max-w-sm rounded-3xl overflow-hidden shadow-2xl"
+        style={{ animation: 'scaleIn .2s ease-out' }}>
+        <div className={`px-6 pt-7 pb-5 text-center ${isSuspended ? 'bg-orange-600' : 'bg-red-600'}`}>
+          <div className="w-16 h-16 rounded-full bg-white/20 flex items-center justify-center mx-auto mb-3">
+            {isSuspended
+              ? <XCircle    size={32} className="text-white" />
+              : <ShieldAlert size={32} className="text-white" />}
+          </div>
+          <h2 className="text-white font-black text-xl mb-1">
+            {isSuspended ? 'Account Suspended' : 'Access Denied'}
+          </h2>
+        </div>
+        <div className="bg-white px-6 py-5 text-center">
+          {isSuspended ? (
+            <>
+              <p className="text-slate-700 font-bold text-sm mb-2">
+                You are currently blocked from library access.
+              </p>
+              <p className="text-slate-400 text-xs leading-relaxed mb-5">
+                Please contact the Library Admin to resolve this issue.
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="text-slate-700 font-bold text-sm mb-2">
+                Only @neu.edu.ph institutional emails are allowed.
+              </p>
+              <p className="text-slate-400 text-xs leading-relaxed mb-5">
+                Please sign in using your official NEU Google account.
+              </p>
+            </>
+          )}
+          <button
+            onClick={onDismiss}
+            className={`w-full py-3 rounded-2xl text-white font-black text-sm transition-all ${
+              isSuspended ? 'bg-orange-600 hover:bg-orange-700' : 'bg-red-600 hover:bg-red-700'
+            }`}
+          >
+            Dismiss
+          </button>
+        </div>
+      </div>
+      <style>{`
+        @keyframes scaleIn { from{transform:scale(.88);opacity:0} to{transform:scale(1);opacity:1} }
+      `}</style>
+    </div>
+  );
+}
+
+// ── Main ──────────────────────────────────────────────────────────────
 export default function VisitorHome() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
-  const { user, loading: authLoading, signInWithGoogle, signOut } = useAuth();
+  const {
+    user, loading: authLoading,
+    signInWithGoogle, signOut,
+    blockReason, clearBlockReason,
+    authModal, clearAuthModal,
+  } = useAuth();
+  const clock = useManilaTime();
 
-  const [phase,       setPhase]       = useState<Phase>('idle');
-  const [purpose,     setPurpose]     = useState<VisitPurpose | null>(null);
-  const [visitorId,   setVisitorId]   = useState('');
-  const [visitorName, setVisitorName] = useState('');
-  const [timeInStamp, setTimeInStamp] = useState('');
-  const [duration,    setDuration]    = useState(0);
-  const [errMsg,      setErrMsg]      = useState('');
-  const [gBusy,       setGBusy]       = useState(false);
+  const [phase,     setPhase]     = useState<Phase>('idle');
+  const [errMsg,    setErrMsg]    = useState('');
+  const [purpose,   setPurpose]   = useState<VisitPurpose | null>(null);
+  const [visitorId, setVisitorId] = useState('');
+  const [firstName, setFirstName] = useState('');
+  const [gBusy,     setGBusy]     = useState(false);
 
-  const justRegistered = params.get('registered') === '1';
-  const regName        = params.get('name') ?? '';
+  const showPopup = !!blockReason || !!authModal;
 
+  // No auto-reset timer on this page — success goes to /success route
   useEffect(() => {
     if (authLoading) return;
-    if (justRegistered && regName) {
-      setVisitorName(decodeURIComponent(regName));
-      setPhase('done-in');
-      const t = setTimeout(() => { signOut(); setPhase('idle'); }, 5000);
-      return () => clearTimeout(t);
-    }
-    if (!user) { setPhase('idle'); return; }
-    runSmartCheck();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, authLoading, justRegistered]);
+    if (blockReason) return;
 
-  const runSmartCheck = async () => {
+    if (!user) {
+      if (phase !== 'error') setPhase('idle');
+      return;
+    }
+    runSmartToggle();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, authLoading, blockReason]);
+
+  const runSmartToggle = async () => {
     if (!user?.email) return;
     setPhase('checking');
     try {
+      const email = user.email.toLowerCase().trim();
       const { data: visitor } = await supabase
-        .from('visitors').select('id, full_name, is_blocked')
-        .eq('email', user.email.toLowerCase()).maybeSingle();
+        .from('visitors')
+        .select('id, full_name, is_blocked')
+        .eq('email', email)
+        .maybeSingle();
 
       if (!visitor) {
+        // Not registered - redirect to registration
         navigate(
           `/register?email=${encodeURIComponent(user.email)}&name=${encodeURIComponent(
             user.user_metadata?.full_name ?? user.user_metadata?.name ?? ''
@@ -72,23 +162,30 @@ export default function VisitorHome() {
       }
 
       if (visitor.is_blocked) {
-        setErrMsg('Your library access has been restricted. Please contact the librarian for assistance.');
+        setErrMsg('Account Suspended: You are currently blocked from library access. Please contact the administrator.');
         setPhase('error');
+        await signOut();
         return;
       }
 
       setVisitorId(visitor.id);
-      setVisitorName(visitor.full_name);
+      setFirstName(visitor.full_name.split(' ')[0]);
 
+      // Check if user has an open session (time_out is null)
       const { data: openLog } = await supabase
-        .from('visit_logs').select('id, time_in')
-        .eq('visitor_id', visitor.id).is('time_out', null)
-        .order('time_in', { ascending: false }).limit(1).maybeSingle();
+        .from('visit_logs')
+        .select('id, time_in, purpose')
+        .eq('visitor_id', visitor.id)
+        .is('time_out', null)
+        .order('time_in', { ascending: false })
+        .limit(1)
+        .maybeSingle();
 
       if (openLog) {
-        setTimeInStamp(openLog.time_in);
-        await doTimeOut(openLog.id, openLog.time_in);
+        // User has open session - do TIME OUT
+        await doTimeOut(openLog.id, openLog.time_in, visitor.full_name.split(' ')[0]);
       } else {
+        // No open session - do TIME IN (select purpose first)
         setPhase('select-purpose');
       }
     } catch (e: unknown) {
@@ -98,259 +195,285 @@ export default function VisitorHome() {
   };
 
   const doTimeIn = async (pid: VisitPurpose) => {
-    setPhase('timing-in');
+    setPhase('working');
     try {
       const now = new Date().toISOString();
       const { error } = await supabase.from('visit_logs').insert({
-        visitor_id: visitorId, purpose: pid, time_in: now, visit_date: now.split('T')[0],
+        visitor_id: visitorId, purpose: pid,
+        time_in: now, visit_date: now.split('T')[0],
       });
       if (error) throw error;
-      setTimeInStamp(now);
-      setPhase('done-in');
-      setTimeout(() => { signOut(); setPhase('idle'); }, 5000);
+
+      // Time string in PHT
+      const timeStr = new Date().toLocaleTimeString('en-PH', {
+        hour: '2-digit', minute: '2-digit', hour12: true,
+      });
+
+      // Sign out auth session, then go to success page
+      await signOut();
+      navigate(
+        `/success?action=in&name=${encodeURIComponent(firstName)}&time=${encodeURIComponent(timeStr)}`,
+        { replace: true }
+      );
     } catch (e: unknown) {
-      setErrMsg((e as Error)?.message ?? 'Could not record your entry. Please try again.');
+      setErrMsg((e as Error)?.message ?? 'Could not record your entry.');
       setPhase('error');
     }
   };
 
-  const doTimeOut = async (logId: string, timeIn: string) => {
-    setPhase('timing-out');
+  const doTimeOut = async (logId: string, timeIn: string, name: string) => {
+    setPhase('working');
     try {
       const now = new Date().toISOString();
       const dur = calcDurationMinutes(timeIn, now);
-      const { error } = await supabase.from('visit_logs')
-        .update({ time_out: now, duration_minutes: dur }).eq('id', logId);
+      const { error } = await supabase
+        .from('visit_logs')
+        .update({ time_out: now, duration_minutes: dur })
+        .eq('id', logId);
       if (error) throw error;
-      setDuration(dur);
-      setPhase('done-out');
-      setTimeout(() => { signOut(); setPhase('idle'); }, 5000);
+
+      const timeStr = new Date().toLocaleTimeString('en-PH', {
+        hour: '2-digit', minute: '2-digit', hour12: true,
+      });
+
+      await signOut();
+      navigate(
+        `/success?action=out&name=${encodeURIComponent(name || firstName)}&time=${encodeURIComponent(timeStr)}&duration=${encodeURIComponent(fmtDuration(dur))}`,
+        { replace: true }
+      );
     } catch (e: unknown) {
-      setErrMsg((e as Error)?.message ?? 'Could not record your exit. Please try again.');
+      setErrMsg((e as Error)?.message ?? 'Could not record your time out.');
       setPhase('error');
     }
   };
 
   const handleGoogleSignIn = async () => {
-    setGBusy(true); setErrMsg('');
-    const { error } = await signInWithGoogle('/');
-    if (error) { setErrMsg(error); setPhase('error'); setGBusy(false); }
+    clearBlockReason(); setErrMsg(''); setGBusy(true);
+    
+    try {
+      secureLog('info', 'Google sign-in attempt initiated');
+      const { error } = await signInWithGoogle('/');
+      if (error) { 
+        secureLog('error', 'Google sign-in failed', { error });
+        setErrMsg(error); 
+        setPhase('error'); 
+      }
+    } catch (e) {
+      secureLog('error', 'Google sign-in exception', { error: (e as Error)?.message });
+      setErrMsg('Sign-in failed. Please try again.');
+      setPhase('error');
+    } finally {
+      setGBusy(false);
+    }
   };
 
-  const reset = () => signOut().then(() => { setPhase('idle'); setErrMsg(''); setPurpose(null); });
-
-  const nowTimePH = new Date().toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit', hour12: true });
-
-  // Shared card wrapper
-  const Card = ({ children }: { children: React.ReactNode }) => (
-    <div className="bg-white/95 backdrop-blur-sm rounded-2xl shadow-2xl overflow-hidden">
-      {children}
-    </div>
-  );
+  const reset = () => {
+    clearBlockReason(); setErrMsg(''); setPurpose(null);
+    signOut().then(() => setPhase('idle'));
+  };
 
   return (
-    <div className="min-h-screen relative flex flex-col items-center justify-center p-4 overflow-hidden">
-      {/* ── Background image with overlay ─────────────────────────── */}
-      <div className="absolute inset-0 z-0">
-        <img
-          src="/Neu-Lib_Building.jpg"
-          alt=""
-          className="w-full h-full object-cover object-center"
-          loading="eager"
-          onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+    <>
+      {/* Show blockReason popup if exists */}
+      {blockReason && <BlockPopup message={blockReason} onDismiss={clearBlockReason} />}
+      
+      {/* AuthModal is rendered globally in AuthProvider, but we can also show blockReason here */}
+
+      <div className="min-h-screen relative">
+        {/* Fixed background */}
+        <div
+          className="fixed inset-0 -z-10"
+          style={{
+            backgroundImage: "url('/Neu-Lib_Building.jpg')",
+            backgroundSize: 'cover',
+            backgroundPosition: 'center center',
+          }}
+          aria-hidden
         />
-        {/* Color overlay that preserves brand colors + ensures readability */}
-        <div className="absolute inset-0"
-          style={{ background: 'linear-gradient(135deg, rgba(0,30,120,0.82) 0%, rgba(0,48,135,0.78) 50%, rgba(13,30,60,0.85) 100%)' }} />
-      </div>
+        {/* Fixed dark overlay */}
+        <div
+          className="fixed inset-0 -z-10"
+          style={{
+            background: 'linear-gradient(160deg,rgba(0,20,80,.82) 0%,rgba(0,50,160,.78) 50%,rgba(0,20,80,.86) 100%)',
+          }}
+          aria-hidden
+        />
 
-      {/* Admin link */}
-      <a href="/admin/login"
-        className="absolute top-5 right-6 text-white/40 hover:text-white/70 text-xs font-medium transition-colors z-20">
-        Admin Portal →
-      </a>
+        <div className="relative z-10 min-h-screen flex flex-col items-center justify-center p-4">
+          <a href="/admin/login"
+            className="absolute top-5 right-7 text-white/50 hover:text-white/80 text-sm font-medium transition-colors">
+            Admin Portal →
+          </a>
 
-      <div className="relative z-10 w-full max-w-sm">
-        {/* Logo + title */}
-        <div className="text-center mb-6">
-          <div className="flex justify-center mb-4">
-            <div className="relative">
-              <div className="absolute inset-0 rounded-full blur-2xl opacity-50"
-                style={{ background: 'radial-gradient(circle, #60A5FA 0%, transparent 70%)' }} />
-              <img src="/neu-logo.svg" alt="NEU"
-                className="relative h-24 w-24 object-contain drop-shadow-2xl"
+          <div className="w-full max-w-md flex flex-col items-center gap-5">
+
+            {/* Clock */}
+            <div className="text-center select-none">
+              <div
+                className="flex items-end justify-center gap-2"
+                style={{ fontFamily: 'Outfit, sans-serif' }}
+              >
+                <span
+                  className="text-white font-black leading-none"
+                  style={{
+                    fontSize: 'clamp(56px, 10vw, 88px)',
+                    textShadow: '0 4px 24px rgba(0,0,0,.6)',
+                    letterSpacing: '-2px',
+                  }}
+                >
+                  {clock.hh}:{clock.mm}
+                </span>
+                <div className="pb-2 flex flex-col items-start gap-0.5">
+                  <span className="text-white font-black text-xl leading-none">{clock.ap}</span>
+                  <span className="text-white/50 font-bold text-base tabular-nums leading-none">:{clock.ss}</span>
+                </div>
+              </div>
+              <p className="text-white/65 text-xs font-semibold mt-1.5 tracking-wide">{clock.day}</p>
+              <div className="flex items-center justify-center gap-1.5 mt-1">
+                <Clock size={9} className="text-white/35" />
+                <span className="text-white/35 text-[9px] font-bold uppercase tracking-widest">
+                  Philippine Standard Time
+                </span>
+              </div>
+            </div>
+
+            {/* Logo + title */}
+            <div className="text-center">
+              <img
+                src="/NEU%20Library%20logo.png"
+                alt="NEU"
+                className="h-24 w-24 object-contain mx-auto mb-3 drop-shadow-2xl"
                 onError={e => {
-                  const img = e.currentTarget as HTMLImageElement;
-                  if (!img.dataset.tried) { img.dataset.tried = '1'; img.src = '/NEU%20Library%20logo.png'; }
-                  else img.style.display = 'none';
-                }} />
-            </div>
-          </div>
-          <h1 className="text-3xl font-black text-white tracking-tight leading-tight"
-            style={{ fontFamily: 'Outfit, sans-serif' }}>
-            NEU Library
-          </h1>
-          <p className="text-white/55 text-sm mt-1 font-medium">Visitor Log · New Era University</p>
-        </div>
-
-        {/* ── IDLE ─────────────────────────────────────────────────── */}
-        {phase === 'idle' && !authLoading && (
-          <Card>
-            <div className="p-7 text-center">
-              <p className="text-slate-600 text-sm leading-relaxed mb-6">
-                Sign in with your NEU Google account to record your library visit.
-              </p>
-              <button onClick={handleGoogleSignIn} disabled={gBusy}
-                className="w-full flex items-center justify-center gap-3 py-3.5 rounded-xl border-2 border-slate-200 bg-white hover:bg-slate-50 hover:border-blue-300 text-sm font-bold text-slate-700 transition-all shadow-sm disabled:opacity-60">
-                {gBusy ? <Loader2 size={18} className="animate-spin text-blue-600" /> : <GoogleIcon />}
-                {gBusy ? 'Opening Google…' : 'Sign in with Google'}
-              </button>
-              <p className="text-[11px] text-slate-400 mt-4 font-medium">
-                Only <span className="font-bold text-slate-500">@neu.edu.ph</span> accounts are accepted
+                  const i = e.currentTarget as HTMLImageElement;
+                  if (!i.dataset.t) { i.dataset.t = '1'; i.src = '/neu-logo.svg'; }
+                  else i.style.display = 'none';
+                }}
+              />
+              <h1
+                className="text-white font-bold text-3xl tracking-tight"
+                style={{ textShadow: '0 2px 12px rgba(0,0,0,.5)' }}
+              >
+                NEU Library
+              </h1>
+              <p className="text-white/55 text-sm mt-0.5 font-medium">
+                Visitor Log · New Era University
               </p>
             </div>
-          </Card>
-        )}
 
-        {/* ── CHECKING / PROCESSING ─────────────────────────────────── */}
-        {(phase === 'checking' || phase === 'timing-in' || authLoading) && (
-          <Card>
-            <div className="p-8 text-center">
-              <div className="w-14 h-14 rounded-full bg-blue-50 flex items-center justify-center mx-auto mb-4">
-                <Loader2 size={26} className="animate-spin text-blue-600" />
-              </div>
-              <p className="text-slate-700 text-sm font-semibold">
-                {phase === 'timing-in' ? 'Recording your visit…' : 'Verifying your account…'}
-              </p>
-              <p className="text-slate-400 text-xs mt-1">This will only take a moment</p>
-            </div>
-          </Card>
-        )}
+            {/*
+              CRITICAL FIX: bg-white NOT bg-white/90
+              Semi-transparent white caused text to be unreadable against the dark bg.
+              Solid white card = always readable.
+            */}
+            <div className="w-full bg-white rounded-2xl shadow-2xl overflow-hidden">
 
-        {/* ── TIMING OUT ────────────────────────────────────────────── */}
-        {phase === 'timing-out' && (
-          <Card>
-            <div className="p-8 text-center">
-              <div className="w-14 h-14 rounded-full bg-amber-50 flex items-center justify-center mx-auto mb-4">
-                <Loader2 size={26} className="animate-spin text-amber-500" />
-              </div>
-              <p className="text-slate-700 text-sm font-semibold">Recording your exit…</p>
-              <p className="text-slate-400 text-xs mt-1">Almost done</p>
-            </div>
-          </Card>
-        )}
-
-        {/* ── SELECT PURPOSE ────────────────────────────────────────── */}
-        {phase === 'select-purpose' && (
-          <Card>
-            <div className="bg-blue-600 px-6 py-4 text-center">
-              <div className="flex items-center justify-center gap-2 mb-1">
-                <LogIn size={16} className="text-white/80" />
-                <p className="text-white font-bold">Welcome back, {visitorName.split(' ')[0]}!</p>
-              </div>
-              <p className="text-white/60 text-xs">Please select your reason for visiting today</p>
-            </div>
-            <div className="p-5">
-              <div className="grid grid-cols-2 gap-3 mb-4">
-                {PURPOSES.map(p => (
-                  <button key={p} onClick={() => setPurpose(p)}
-                    className="rounded-xl border-2 py-4 flex flex-col items-center gap-2 transition-all duration-150"
-                    style={{
-                      borderColor: purpose === p ? '#2563EB' : '#E2E8F0',
-                      background:  purpose === p ? '#EFF6FF' : '#FAFAFA',
-                    }}>
-                    <span className="text-2xl">{PURPOSE_EMOJI[p]}</span>
-                    <span className="text-[11px] font-bold" style={{ color: purpose === p ? '#2563EB' : '#64748B' }}>{p}</span>
+              {/* IDLE */}
+              {phase === 'idle' && (
+                <div className="px-8 py-8 text-center">
+                  <p className="text-slate-600 text-sm mb-6 leading-relaxed">
+                    Sign in with your <strong className="text-neu-blue">@neu.edu.ph</strong> account to record your library visit.
+                    The application will automatically check you{' '}
+                    <strong className="text-slate-800">in</strong> or{' '}
+                    <strong className="text-slate-800">out</strong>.
+                  </p>
+                  <button
+                    onClick={handleGoogleSignIn}
+                    disabled={gBusy}
+                    className="w-full flex items-center justify-center gap-3 py-3.5 rounded-xl border-2 border-slate-200 bg-white hover:bg-slate-50 hover:border-slate-300 text-sm font-semibold text-slate-700 transition-all disabled:opacity-60 shadow-sm"
+                  >
+                    {gBusy ? <Loader2 size={18} className="animate-spin text-blue-600" /> : <GoogleIcon size={18} />}
+                    {gBusy ? 'Opening Google…' : 'Sign in with Google'}
                   </button>
-                ))}
-              </div>
-              <button onClick={() => purpose && doTimeIn(purpose)} disabled={!purpose}
-                className="w-full py-3.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm flex items-center justify-center gap-2 transition-all disabled:opacity-40 shadow-sm">
-                <LogIn size={16} /> Record My Visit
-              </button>
-              <button onClick={reset} className="w-full mt-2 py-2 text-xs text-slate-400 hover:text-slate-600 transition-colors">
-                Sign out
-              </button>
-            </div>
-          </Card>
-        )}
-
-        {/* ── SUCCESS: TIME IN ──────────────────────────────────────── */}
-        {phase === 'done-in' && (
-          <Card>
-            <div className="p-8 text-center">
-              <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center mx-auto mb-4">
-                <CheckCircle size={32} className="text-green-500" />
-              </div>
-              <h2 className="text-xl font-black text-slate-900 mb-2" style={{ fontFamily: 'Outfit, sans-serif' }}>
-                Welcome to the Library!
-              </h2>
-              <p className="text-slate-600 text-sm leading-relaxed mb-1">
-                {visitorName ? `Good to see you, ${visitorName.split(' ')[0]}.` : 'Your entry has been recorded.'}
-              </p>
-              <p className="text-green-600 font-bold text-sm">{nowTimePH}</p>
-
-              <div className="mt-5 pt-4 border-t border-slate-100 flex items-center justify-center gap-2 text-xs text-slate-400">
-                <Clock size={12} />
-                <span>Returning to home shortly…</span>
-              </div>
-            </div>
-          </Card>
-        )}
-
-        {/* ── SUCCESS: TIME OUT ─────────────────────────────────────── */}
-        {phase === 'done-out' && (
-          <Card>
-            <div className="p-8 text-center">
-              <div className="w-16 h-16 rounded-full bg-amber-100 flex items-center justify-center mx-auto mb-4">
-                <svg className="w-8 h-8 text-amber-500" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15M12 9l-3 3m0 0l3 3m-3-3h12.75" />
-                </svg>
-              </div>
-              <h2 className="text-xl font-black text-slate-900 mb-2" style={{ fontFamily: 'Outfit, sans-serif' }}>
-                Thank You for Visiting!
-              </h2>
-              <p className="text-slate-600 text-sm leading-relaxed">
-                {visitorName
-                  ? `Safe travels, ${visitorName.split(' ')[0]}. You have successfully timed out.`
-                  : 'You have successfully timed out.'}
-              </p>
-              {duration > 0 && (
-                <div className="mt-4 inline-flex items-center gap-2 bg-amber-50 border border-amber-200 text-amber-700 px-4 py-2 rounded-full text-sm font-bold">
-                  <Clock size={14} />
-                  {fmtDuration(duration)} visit
+                  <p className="text-slate-400 text-[11px] mt-4">
+                    Only <strong className="text-slate-600">@neu.edu.ph</strong> institutional emails are accepted
+                  </p>
                 </div>
               )}
-              <div className="mt-5 pt-4 border-t border-slate-100 flex items-center justify-center gap-2 text-xs text-slate-400">
-                <Clock size={12} />
-                <span>Returning to home shortly…</span>
-              </div>
-            </div>
-          </Card>
-        )}
 
-        {/* ── ERROR ─────────────────────────────────────────────────── */}
-        {phase === 'error' && (
-          <Card>
-            <div className="p-8 text-center">
-              <div className="w-14 h-14 rounded-full bg-red-100 flex items-center justify-center mx-auto mb-4">
-                <svg className="w-7 h-7 text-red-500" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
-                </svg>
-              </div>
-              <p className="text-slate-700 text-sm font-semibold leading-relaxed mb-5">{errMsg}</p>
-              <button onClick={reset}
-                className="w-full py-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold transition-all shadow-sm">
-                Try Again
-              </button>
+              {/* CHECKING / WORKING */}
+              {(phase === 'checking' || phase === 'working' || authLoading) && (
+                <div className="px-8 py-10 text-center">
+                  <Loader2 size={32} className="animate-spin text-blue-600 mx-auto mb-4" />
+                  <p className="text-slate-700 text-sm font-semibold">
+                    {phase === 'working' ? 'Recording your visit…' : 'Verifying your account…'}
+                  </p>
+                  <p className="text-slate-400 text-xs mt-1">This only takes a moment</p>
+                </div>
+              )}
+
+              {/* PURPOSE PICKER */}
+              {phase === 'select-purpose' && (
+                <>
+                  <div className="px-6 pt-6 pb-3 text-center border-b border-slate-100">
+                    <p className="font-bold text-slate-800 text-base">
+                      Hello, <span className="text-blue-600">{firstName}</span>!
+                    </p>
+                    <p className="text-slate-500 text-xs mt-0.5">What brings you to the library today?</p>
+                  </div>
+                  <div className="p-5">
+                    <div className="grid grid-cols-2 gap-3 mb-4">
+                      {PURPOSES.map(p => (
+                        <button
+                          key={p}
+                          onClick={() => setPurpose(p)}
+                          className="rounded-xl border-2 py-4 px-3 flex flex-col items-center gap-2 transition-all"
+                          style={{
+                            borderColor: purpose === p ? '#2563EB' : '#E2E8F0',
+                            background:  purpose === p ? '#EFF6FF' : '#F9FAFB',
+                            transform:   purpose === p ? 'scale(1.02)' : 'scale(1)',
+                          }}
+                        >
+                          <span className="text-2xl">{PURPOSE_EMOJI[p]}</span>
+                          <span
+                            className="text-[11px] font-bold text-center leading-tight"
+                            style={{ color: purpose === p ? '#2563EB' : '#64748B' }}
+                          >
+                            {p}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                    <button
+                      onClick={() => purpose && doTimeIn(purpose)}
+                      disabled={!purpose}
+                      className="w-full py-3.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm disabled:opacity-40 transition-all shadow-sm"
+                    >
+                      Confirm Time In
+                    </button>
+                    <button
+                      onClick={reset}
+                      className="w-full mt-2 py-2 text-xs text-slate-400 hover:text-slate-600 transition-colors"
+                    >
+                      Cancel — use a different account
+                    </button>
+                  </div>
+                </>
+              )}
+
+              {/* ERROR */}
+              {phase === 'error' && (
+                <div className="px-8 py-9 text-center">
+                  <div className="w-14 h-14 rounded-full bg-red-100 flex items-center justify-center mx-auto mb-4">
+                    <ShieldAlert size={26} className="text-red-500" />
+                  </div>
+                  <p className="text-slate-900 font-black text-base mb-2">Sign-In Blocked</p>
+                  <p className="text-slate-600 text-sm leading-relaxed mb-6">{errMsg}</p>
+                  <button
+                    onClick={reset}
+                    className="w-full py-3 rounded-xl bg-blue-600 text-white text-sm font-bold hover:bg-blue-700 transition-all"
+                  >
+                    Try Again
+                  </button>
+                </div>
+              )}
             </div>
-          </Card>
-        )}
+
+            <p className="text-white/30 text-[11px] font-medium">
+              © {new Date().getFullYear()} New Era University · Library Visitor Log
+            </p>
+          </div>
+        </div>
       </div>
-
-      <p className="relative z-10 mt-6 text-white/20 text-[10px] font-medium text-center">
-        © {new Date().getFullYear()} New Era University · Library Visitor Log
-      </p>
-    </div>
+    </>
   );
 }

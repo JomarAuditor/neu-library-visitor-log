@@ -2,6 +2,7 @@ import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from 'recha
 import { Loader2, PieChart as PieIcon } from 'lucide-react';
 import { useByCollege } from '@/hooks/useStats';
 import { CHART_COLORS } from '@/lib/utils';
+import { sanitizeHTML } from '@/lib/security';
 
 const RADIAN = Math.PI / 180;
 
@@ -20,10 +21,15 @@ const CustomLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, percent }: an
 
 const Tip = ({ active, payload }: any) => {
   if (!active || !payload?.length) return null;
+  const data = payload[0];
+  // React automatically escapes content, just ensure it's a string
+  const name = String(data.name || '');
+  const value = Number(data.value) || 0;
+  
   return (
     <div className="bg-white border border-neu-border shadow-card rounded-xl px-4 py-2.5">
-      <p className="text-xs font-semibold text-slate-700">{payload[0].name}</p>
-      <p className="text-sm font-bold text-neu-blue">{payload[0].value} visit{payload[0].value !== 1 ? 's' : ''}</p>
+      <p className="text-xs font-semibold text-slate-700">{name}</p>
+      <p className="text-sm font-bold text-neu-blue">{value} visit{value !== 1 ? 's' : ''}</p>
     </div>
   );
 };
@@ -32,10 +38,18 @@ interface Props { filter: string; from?: string; to?: string; }
 
 export function CollegeChart({ filter, from, to }: Props) {
   const { data, isLoading } = useByCollege(filter, from, to);
-  const chart = (data ?? []).map(d => ({
-    ...d,
-    shortName: d.college.replace('College of ', '').replace('College ', ''),
-  }));
+  
+  // React automatically escapes content - just ensure proper types
+  const chart = (data ?? []).map(d => {
+    const name = String(d.college || '');
+    const count = Number(d.count) || 0;
+    
+    return {
+      college: name,
+      shortName: name.replace('College of ', '').replace('College ', ''),
+      count: count,
+    };
+  });
 
   return (
     <div className="card-p h-full animate-fade-up delay-2">
@@ -66,7 +80,11 @@ export function CollegeChart({ filter, from, to }: Props) {
             <Tooltip content={<Tip />} />
             <Legend layout="vertical" align="right" verticalAlign="middle"
               iconSize={8} iconType="circle"
-              formatter={(v) => <span style={{ fontSize: 11, fontFamily: 'Poppins', color: '#475569', fontWeight: 500 }}>{v}</span>}
+              formatter={(v) => {
+                // React automatically escapes content
+                const text = String(v || '');
+                return <span style={{ fontSize: 11, fontFamily: 'Poppins', color: '#475569', fontWeight: 500 }}>{text}</span>;
+              }}
             />
           </PieChart>
         </ResponsiveContainer>

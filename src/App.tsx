@@ -1,30 +1,30 @@
+// src/App.tsx
 import { BrowserRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import { QueryClient, QueryClientProvider }               from '@tanstack/react-query';
 import { AuthProvider }    from '@/hooks/useAuth';
 import { AdminLayout }     from '@/components/layout/AdminLayout';
-
 import VisitorHome    from '@/pages/visitor/VisitorHome';
 import RegisterPage   from '@/pages/visitor/RegisterPage';
+import SuccessPage    from '@/pages/visitor/SuccessPage';
 import AdminLogin     from '@/pages/admin/AdminLogin';
 import Dashboard      from '@/pages/admin/Dashboard';
 import VisitorLogs    from '@/pages/admin/VisitorLogs';
 import UserManagement from '@/pages/admin/UserManagement';
 
-// Preload colleges + programs on app startup — no "Loading..." in registration form
 const qc = new QueryClient({
   defaultOptions: {
     queries: {
-      retry:         1,
-      staleTime:     30_000,
-      refetchOnWindowFocus: false,  // KEY: prevents re-fetching (and flickering) on tab switch
+      retry:                1,
+      staleTime:            30_000,
+      refetchOnWindowFocus: false, // prevents re-fetch (and auth reset) on tab switch
     },
   },
 });
 
-// Kick off prefetch immediately
+// Prefetch colleges + programs at startup — registration form is instant
 qc.prefetchQuery({
   queryKey: ['colleges'],
-  queryFn:  async () => {
+  queryFn: async () => {
     const { supabase } = await import('@/lib/supabase');
     const { data } = await supabase.from('colleges').select('id,name,abbreviation').order('name');
     return data ?? [];
@@ -33,7 +33,7 @@ qc.prefetchQuery({
 });
 qc.prefetchQuery({
   queryKey: ['all-programs'],
-  queryFn:  async () => {
+  queryFn: async () => {
     const { supabase } = await import('@/lib/supabase');
     const { data } = await supabase.from('programs').select('id,college_id,name,abbreviation').order('name');
     return data ?? [];
@@ -45,16 +45,23 @@ export default function App() {
   return (
     <QueryClientProvider client={qc}>
       <AuthProvider>
-        <BrowserRouter>
+        <BrowserRouter
+          future={{
+            v7_startTransition:   true,
+            v7_relativeSplatPath: true,
+          }}
+        >
           <Routes>
-            {/* Visitor */}
-            <Route path="/"          element={<VisitorHome />}  />
-            <Route path="/register"  element={<RegisterPage />} />
+            {/* ── Visitor kiosk ── */}
+            <Route path="/"        element={<VisitorHome  />} />
+            <Route path="/register" element={<RegisterPage />} />
+            {/* Dedicated success screen (Time-In / Time-Out result) */}
+            <Route path="/success"  element={<SuccessPage  />} />
 
-            {/* Admin login — standalone, never inside AdminLayout */}
+            {/* ── Admin login — standalone ── */}
             <Route path="/admin/login" element={<AdminLogin />} />
 
-            {/* Protected admin routes */}
+            {/* ── Protected admin routes ── */}
             <Route path="/admin" element={<AdminLayout><Outlet /></AdminLayout>}>
               <Route index            element={<Navigate to="/admin/dashboard" replace />} />
               <Route path="dashboard" element={<Dashboard />}      />
@@ -62,6 +69,7 @@ export default function App() {
               <Route path="users"     element={<UserManagement />} />
             </Route>
 
+            {/* Catch-all */}
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </BrowserRouter>

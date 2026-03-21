@@ -4,15 +4,21 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import { Loader2, BarChart2 } from 'lucide-react';
 import { useByCourse } from '@/hooks/useStats';
 import { CHART_COLORS } from '@/lib/utils';
+import { sanitizeHTML } from '@/lib/security';
 
 const Tip = ({ active, payload, label }: any) => {
   if (!active || !payload?.length) return null;
+  // Get raw data without double encoding
+  const fullName = String(payload[0]?.payload?.fullName ?? label);
+  const labelText = String(label);
+  const safeValue = Number(payload[0].value) || 0;
+  
   return (
     <div className="bg-white border border-neu-border shadow-card rounded-xl px-4 py-2.5">
-      <p className="text-xs font-semibold text-slate-700">{payload[0]?.payload?.fullName ?? label}</p>
-      <p className="text-xs text-slate-400">{label}</p>
+      <p className="text-xs font-semibold text-slate-700">{fullName}</p>
+      <p className="text-xs text-slate-400">{labelText}</p>
       <p className="text-sm font-bold text-neu-blue mt-0.5">
-        {payload[0].value} visit{payload[0].value !== 1 ? 's' : ''}
+        {safeValue} visit{safeValue !== 1 ? 's' : ''}
       </p>
     </div>
   );
@@ -21,7 +27,18 @@ const Tip = ({ active, payload, label }: any) => {
 interface Props { filter: string; from?: string; to?: string; }
 
 export function CourseChart({ filter, from, to }: Props) {
-  const { data, isLoading } = useByCourse(filter, from, to);
+  const { data: rawData, isLoading } = useByCourse(filter, from, to);
+  
+  // Filter out N/A entries and prepare data
+  const data = rawData?.filter(item => 
+    item.abbreviation && 
+    item.abbreviation !== 'N/A' && 
+    item.abbreviation !== 'N&#x2F;A'
+  ).map(item => ({
+    ...item,
+    fullName: String(item.fullName || 'No Program'),
+    abbreviation: String(item.abbreviation || 'N/A'),
+  }));
 
   return (
     <div className="card-p h-full animate-fade-up delay-3">
@@ -60,6 +77,7 @@ export function CourseChart({ filter, from, to }: Props) {
               angle={-35}
               textAnchor="end"
               height={52}
+              tickFormatter={(value) => String(value || '')}
             />
             <YAxis
               tick={{ fontSize: 11, fontFamily: 'Poppins', fill: '#94a3b8' }}
