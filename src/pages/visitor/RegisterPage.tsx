@@ -83,12 +83,25 @@ export default function RegisterPage() {
 
       // Time-In immediately
       const now = new Date().toISOString();
-      await supabase.from('visit_logs').insert({
+      const { error: logError } = await supabase.from('visit_logs').insert({
         visitor_id: vid, purpose, time_in: now, visit_date: now.split('T')[0],
       });
 
-      navigate(`/?registered=1&name=${encodeURIComponent(fullName.trim())}`, { replace: true });
+      if (logError) throw logError;
+
+      // Get time string for success page
+      const timeStr = new Date().toLocaleTimeString('en-PH', {
+        hour: '2-digit', minute: '2-digit', hour12: true,
+      });
+
+      // Sign out and redirect to success page (not home)
+      await signOut();
+      navigate(
+        `/success?action=in&name=${encodeURIComponent(fullName.trim())}&time=${encodeURIComponent(timeStr)}`,
+        { replace: true }
+      );
     } catch (e: unknown) {
+      console.error('Registration error:', e);
       setError((e as Error)?.message ?? 'Registration failed. Please try again.');
     } finally {
       setLoading(false);

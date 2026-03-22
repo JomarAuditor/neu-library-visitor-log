@@ -29,7 +29,7 @@ function UnauthorizedPopup({ email, onClose }: { email: string; onClose: () => v
             <ShieldX size={32} className="text-white" />
           </div>
           <h2 className="text-white font-black text-xl mb-1">Unauthorized</h2>
-          <p className="text-white/80 text-sm font-medium">This area is for Authorized Admins only.</p>
+          <p className="text-white/80 text-sm font-medium">Only authorized NEU accounts are allowed.</p>
         </div>
         <div className="bg-white px-6 py-5 text-center">
           <p className="text-slate-500 text-xs mb-1">Attempted access from:</p>
@@ -55,6 +55,25 @@ export default function AdminLogin() {
   const [error,       setError]       = useState('');
   const [showUnauth,  setShowUnauth]  = useState(false);
   const [unauthEmail, setUnauthEmail] = useState('');
+
+  // Check URL for Supabase errors on mount
+  useEffect(() => {
+    const search = new URLSearchParams(window.location.search);
+    const hash = new URLSearchParams(window.location.hash.replace('#', ''));
+    const errorCode = search.get('error') || hash.get('error');
+    const errorDesc = search.get('error_description') || hash.get('error_description');
+
+    if (errorCode === 'server_error' || errorDesc?.includes('Database error')) {
+      console.error('❌ Non-NEU email blocked by database trigger:', {
+        error: errorCode,
+        description: errorDesc,
+        url: window.location.href
+      });
+      console.warn('⚠️ Admin login attempted with non-@neu.edu.ph email');
+      setError('Only authorized NEU accounts are allowed.');
+      window.history.replaceState({}, '', '/admin/login');
+    }
+  }, []);
 
   useEffect(() => {
     if (loading || !profileReady) return;

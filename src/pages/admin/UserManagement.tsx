@@ -1,7 +1,7 @@
 // src/pages/admin/UserManagement.tsx
 // Clean layout — search on its own row, no field chips.
 // Visitors/Admins tabs, Block/Unblock confirm, Revoke super-admin only.
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { useQueryClient, useMutation } from '@tanstack/react-query';
 import {
   Users, Shield, ShieldOff, ShieldX,
@@ -107,14 +107,7 @@ export default function UserManagement() {
 
   const { data: allVisitors = [], isLoading } = useVisitors('');
 
-  // Real-time
-  useEffect(() => {
-    const ch = supabase.channel('users-rt')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'visitors' },
-        () => qc.invalidateQueries({ queryKey: ['visitors'] }))
-      .subscribe();
-    return () => { supabase.removeChannel(ch); };
-  }, [qc]);
+  // Real-time updates are now handled in useVisitors hook
 
   // Global case-insensitive search
   const {

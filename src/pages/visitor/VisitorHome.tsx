@@ -51,6 +51,7 @@ function GoogleIcon({ size = 20 }: { size?: number }) {
 // ── Block popup ───────────────────────────────────────────────────────
 function BlockPopup({ message, onDismiss }: { message: string; onDismiss: () => void }) {
   const isSuspended = message.toLowerCase().includes('suspended') || message.toLowerCase().includes('blocked');
+  const isNonNEU = message.toLowerCase().includes('only @neu.edu.ph');
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
@@ -65,8 +66,11 @@ function BlockPopup({ message, onDismiss }: { message: string; onDismiss: () => 
               : <ShieldAlert size={32} className="text-white" />}
           </div>
           <h2 className="text-white font-black text-xl mb-1">
-            {isSuspended ? 'Account Suspended' : 'Access Denied'}
+            {isSuspended ? 'Account Suspended' : isNonNEU ? 'Access Denied' : 'Access Denied'}
           </h2>
+          {isNonNEU && (
+            <p className="text-white/80 text-sm font-medium">Only NEU accounts are allowed.</p>
+          )}
         </div>
         <div className="bg-white px-6 py-5 text-center">
           {isSuspended ? (
@@ -76,6 +80,15 @@ function BlockPopup({ message, onDismiss }: { message: string; onDismiss: () => 
               </p>
               <p className="text-slate-400 text-xs leading-relaxed mb-5">
                 Please contact the Library Admin to resolve this issue.
+              </p>
+            </>
+          ) : isNonNEU ? (
+            <>
+              <p className="text-slate-700 font-bold text-sm mb-2">
+                Only @neu.edu.ph institutional emails are allowed.
+              </p>
+              <p className="text-slate-400 text-xs leading-relaxed mb-5">
+                Please sign in using your official NEU Google account to access the library system.
               </p>
             </>
           ) : (
@@ -126,6 +139,27 @@ export default function VisitorHome() {
 
   const showPopup = !!blockReason || !!authModal;
 
+  // Check URL for Supabase errors on mount
+  useEffect(() => {
+    const search = new URLSearchParams(window.location.search);
+    const hash = new URLSearchParams(window.location.hash.replace('#', ''));
+    const errorCode = search.get('error') || hash.get('error');
+    const errorDesc = search.get('error_description') || hash.get('error_description');
+
+    if (errorCode === 'server_error' || errorDesc?.includes('Database error')) {
+      console.error('❌ Non-NEU email blocked by database trigger:', {
+        error: errorCode,
+        description: errorDesc,
+        url: window.location.href
+      });
+      console.warn('⚠️ User attempted sign-in with non-@neu.edu.ph email');
+      // Trigger the popup via blockReason mechanism
+      setErrMsg('Only @neu.edu.ph institutional emails are allowed.');
+      setPhase('error');
+      window.history.replaceState({}, '', '/');
+    }
+  }, []);
+
   // No auto-reset timer on this page — success goes to /success route
   useEffect(() => {
     if (authLoading) return;
@@ -144,11 +178,15 @@ export default function VisitorHome() {
     setPhase('checking');
     try {
       const email = user.email.toLowerCase().trim();
-      const { data: visitor } = await supabase
+      
+      // Step 1: Get visitor record
+      const { data: visitor, error: visitorError } = await supabase
         .from('visitors')
         .select('id, full_name, is_blocked')
         .eq('email', email)
         .maybeSingle();
+
+      if (visitorError) throw visitorError;
 
       if (!visitor) {
         // Not registered - redirect to registration
@@ -171,8 +209,9 @@ export default function VisitorHome() {
       setVisitorId(visitor.id);
       setFirstName(visitor.full_name.split(' ')[0]);
 
-      // Check if user has an open session (time_out is null)
-      const { data: openLog } = await supabase
+      // Step 2: CRITICAL - Check for ANY open session (time_out IS NULL)
+      // This is the database-driven toggle logic that prevents duplicate "Inside" entries
+      const { data: openLog, error: logError } = await supabase
         .from('visit_logs')
         .select('id, time_in, purpose')
         .eq('visitor_id', visitor.id)
@@ -181,11 +220,13 @@ export default function VisitorHome() {
         .limit(1)
         .maybeSingle();
 
+      if (logError) throw logError;
+
       if (openLog) {
-        // User has open session - do TIME OUT
+        // User has an active session - TIME OUT
         await doTimeOut(openLog.id, openLog.time_in, visitor.full_name.split(' ')[0]);
       } else {
-        // No open session - do TIME IN (select purpose first)
+        // No active session - TIME IN (select purpose first)
         setPhase('select-purpose');
       }
     } catch (e: unknown) {
@@ -198,10 +239,16 @@ export default function VisitorHome() {
     setPhase('working');
     try {
       const now = new Date().toISOString();
+      
+      // CRITICAL: Insert new visit log ONLY when no active session exists
+      // This prevents duplicate "Inside" entries
       const { error } = await supabase.from('visit_logs').insert({
-        visitor_id: visitorId, purpose: pid,
-        time_in: now, visit_date: now.split('T')[0],
+        visitor_id: visitorId,
+        purpose: pid,
+        time_in: now,
+        visit_date: now.split('T')[0],
       });
+      
       if (error) throw error;
 
       // Time string in PHT
@@ -226,10 +273,14 @@ export default function VisitorHome() {
     try {
       const now = new Date().toISOString();
       const dur = calcDurationMinutes(timeIn, now);
+      
+      // CRITICAL: Update the existing record with time_out
+      // This completes the visit and prevents duplicate "Inside" entries
       const { error } = await supabase
         .from('visit_logs')
         .update({ time_out: now, duration_minutes: dur })
         .eq('id', logId);
+        
       if (error) throw error;
 
       const timeStr = new Date().toLocaleTimeString('en-PH', {

@@ -15,10 +15,10 @@
 // Then in the display logic, prefer the direct college over the nested one.
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect }                 from 'react';
 import { supabase }                  from '@/lib/supabase';
 import { getDateRange }              from '@/lib/utils';
 import { College, Program, VisitLog, Visitor } from '@/types';
+import { useVisitLogsRealtime, useVisitorsRealtime, useCurrentlyInsideRealtime } from './useRealtime';
 
 // ── Colleges ──────────────────────────────────────────────────────────
 export function useColleges() {
@@ -83,7 +83,6 @@ export function useDashboardData(
   dateFrom?: string,
   dateTo?: string,
 ) {
-  const qc    = useQueryClient();
   const today = new Date().toISOString().split('T')[0];
   let from = today, to = today;
   if (timeFilter === 'week') {
@@ -117,27 +116,21 @@ export function useDashboardData(
       if (error) throw new Error(error.message);
       return data ?? [];
     },
-    staleTime: 30_000,
-    retry:     2,
+    staleTime: 0, // Always fresh - refetch immediately
+    refetchInterval: 2_000, // Aggressive polling every 2s
+    refetchOnWindowFocus: true,
+    refetchOnMount: true,
+    retry: 2,
   });
 
-  // Real-time subscription
-  useEffect(() => {
-    const ch = supabase.channel('dashboard-rt')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'visit_logs' }, () => {
-        qc.invalidateQueries({ queryKey: ['dashboard'] });
-        qc.invalidateQueries({ queryKey: ['currently-inside'] });
-      })
-      .subscribe();
-    return () => { supabase.removeChannel(ch); };
-  }, [qc]);
+  // Real-time subscription via centralized hook
+  useVisitLogsRealtime();
 
   return query;
 }
 
 // ── Currently inside ──────────────────────────────────────────────────
 export function useCurrentlyInside() {
-  const qc = useQueryClient();
   const { data, isLoading } = useQuery({
     queryKey:        ['currently-inside'],
     queryFn:         async () => {
@@ -148,23 +141,23 @@ export function useCurrentlyInside() {
       if (error) throw new Error(error.message);
       return count ?? 0;
     },
-    refetchInterval: 30_000,
+    staleTime:       0, // Always fresh
+    refetchInterval: 2_000, // Aggressive polling every 2s
+    refetchOnWindowFocus: true,
+    refetchOnMount: true,
     retry:           2,
   });
-  useEffect(() => {
-    const ch = supabase.channel('inside-rt')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'visit_logs' },
-        () => qc.invalidateQueries({ queryKey: ['currently-inside'] }))
-      .subscribe();
-    return () => { supabase.removeChannel(ch); };
-  }, [qc]);
+  
+  // Real-time subscription via centralized hook
+  useCurrentlyInsideRealtime();
+  
   return { count: data ?? 0, loading: isLoading };
 }
 
 // ── By college ────────────────────────────────────────────────────────
 export function useByCollege(filter: string, from?: string, to?: string) {
   const range = getDateRange(filter, from, to);
-  return useQuery({
+  const query = useQuery({
     queryKey: ['by-college', filter, from, to],
     queryFn:  async () => {
       const { data, error } = await supabase
@@ -195,15 +188,22 @@ export function useByCollege(filter: string, from?: string, to?: string) {
         .map(([college, count]) => ({ college, count }))
         .sort((a, b) => b.count - a.count);
     },
-    staleTime: 60_000,
+    staleTime: 0, // Always fresh
+    refetchInterval: 3_000, // Poll every 3s
+    refetchOnWindowFocus: true,
     retry:     2,
   });
+  
+  // Real-time updates
+  useVisitLogsRealtime();
+  
+  return query;
 }
 
 // ── By course ─────────────────────────────────────────────────────────
 export function useByCourse(filter: string, from?: string, to?: string) {
   const range = getDateRange(filter, from, to);
-  return useQuery({
+  const query = useQuery({
     queryKey: ['by-course', filter, from, to],
     queryFn:  async () => {
       const { data, error } = await supabase
@@ -226,9 +226,16 @@ export function useByCourse(filter: string, from?: string, to?: string) {
         .sort((a, b) => b.count - a.count)
         .slice(0, 10);
     },
-    staleTime: 60_000,
+    staleTime: 0, // Always fresh
+    refetchInterval: 3_000, // Poll every 3s
+    refetchOnWindowFocus: true,
     retry:     2,
   });
+  
+  // Real-time updates
+  useVisitLogsRealtime();
+  
+  return query;
 }
 
 // ── Visit logs (paginated) ────────────────────────────────────────────
@@ -241,7 +248,7 @@ export function useVisitLogs(
   pageSize = 25,
 ) {
   const range = getDateRange(filter, from, to);
-  return useQuery({
+  const query = useQuery({
     queryKey: ['visit-logs', filter, search, from, to, page],
     queryFn:  async () => {
       // Search by visitor first if needed
@@ -281,9 +288,17 @@ export function useVisitLogs(
       if (error) throw new Error(error.message);
       return { data: (data ?? []) as unknown as VisitLog[], count: count ?? 0 };
     },
-    staleTime: 15_000,
+    staleTime: 0, // Always fresh
+    refetchInterval: 2_000, // Aggressive polling every 2s
+    refetchOnWindowFocus: true,
+    refetchOnMount: true,
     retry:     2,
   });
+  
+  // Real-time updates
+  useVisitLogsRealtime();
+  
+  return query;
 }
 
 // ── Fetch all logs for CSV export ─────────────────────────────────────
@@ -308,7 +323,7 @@ export async function fetchAllLogsCSV(filter: string, from?: string, to?: string
 
 // ── Visitors (user management) ────────────────────────────────────────
 export function useVisitors(search: string) {
-  return useQuery<Visitor[]>({
+  const query = useQuery<Visitor[]>({
     queryKey: ['visitors', search],
     queryFn:  async () => {
       let q = supabase
@@ -334,7 +349,15 @@ export function useVisitors(search: string) {
       if (error) throw new Error(error.message);
       return (data ?? []) as unknown as Visitor[];
     },
-    staleTime: 15_000,
+    staleTime: 0, // Always fresh
+    refetchInterval: 2_000, // Aggressive polling every 2s
+    refetchOnWindowFocus: true,
+    refetchOnMount: true,
     retry:     2,
   });
+  
+  // Real-time updates
+  useVisitorsRealtime();
+  
+  return query;
 }

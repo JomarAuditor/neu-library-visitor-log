@@ -98,8 +98,8 @@ export default function SuccessPage() {
               {/* Sub-message */}
               <p className="text-slate-500 text-sm leading-relaxed mb-1">
                 {isTimeIn
-                  ? <>Your entry has been recorded{firstName ? `, <strong className="text-slate-700">${firstName}</strong>` : ''}.</>
-                  : <>Your exit has been recorded{firstName ? `, ${firstName}` : ''}.</>}
+                  ? <>Your entry has been recorded{firstName ? <>, <strong className="text-slate-700">{firstName}</strong></> : ''}.</>
+                  : <>Your exit has been recorded{firstName ? <>, {firstName}</> : ''}.</>}
               </p>
               <p className="text-slate-500 text-sm mb-5">
                 {isTimeIn ? 'Enjoy your time here!' : 'Have a great day!'}
