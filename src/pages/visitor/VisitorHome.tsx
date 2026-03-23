@@ -210,7 +210,7 @@ export default function VisitorHome() {
       setFirstName(visitor.full_name.split(' ')[0]);
 
       // Step 2: CRITICAL - Check for ANY open session (time_out IS NULL)
-      // This is the database-driven toggle logic that prevents duplicate "Inside" entries
+      // This prevents multiple active sessions across ALL devices
       const { data: openLog, error: logError } = await supabase
         .from('visit_logs')
         .select('id, time_in, purpose')
@@ -223,12 +223,40 @@ export default function VisitorHome() {
       if (logError) throw logError;
 
       if (openLog) {
-        // User has an active session - TIME OUT
+        // User has an active session - TIME OUT automatically
+        // This ensures only ONE active session per user across all devices
         await doTimeOut(openLog.id, openLog.time_in, visitor.full_name.split(' ')[0]);
-      } else {
-        // No active session - TIME IN (select purpose first)
-        setPhase('select-purpose');
+        return; // Exit after time out
       }
+      
+      // No active session - continue to check cooldown and allow Time In
+      // No active session - continue to check cooldown and allow Time In
+      // ADDITIONAL CHECK: Prevent rapid Time In within 60 seconds of last Time Out
+      const { data: recentCompleted } = await supabase
+        .from('visit_logs')
+        .select('time_out')
+        .eq('visitor_id', visitor.id)
+        .not('time_out', 'is', null)
+        .order('time_out', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (recentCompleted?.time_out) {
+        const lastTimeOut = new Date(recentCompleted.time_out).getTime();
+        const now = Date.now();
+        const secondsSinceLastVisit = (now - lastTimeOut) / 1000;
+
+        if (secondsSinceLastVisit < 60) {
+          // Too soon after last Time Out
+          setErrMsg(`Please wait ${Math.ceil(60 - secondsSinceLastVisit)} seconds before timing in again.`);
+          setPhase('error');
+          await signOut();
+          return;
+        }
+      }
+
+      // No active session - TIME IN (select purpose first)
+      setPhase('select-purpose');
     } catch (e: unknown) {
       setErrMsg((e as Error)?.message ?? 'Something went wrong. Please try again.');
       setPhase('error');
@@ -240,8 +268,42 @@ export default function VisitorHome() {
     try {
       const now = new Date().toISOString();
       
+      // CRITICAL: Double-check for any open session before inserting
+      // This prevents race conditions if user clicks multiple times
+      const { data: existingOpen } = await supabase
+        .from('visit_logs')
+        .select('id')
+        .eq('visitor_id', visitorId)
+        .is('time_out', null)
+        .maybeSingle();
+
+      if (existingOpen) {
+        // Already has an open session - prevent duplicate
+        setErrMsg('You already have an active session. Please time out first.');
+        setPhase('error');
+        await signOut();
+        return;
+      }
+      
+      // CRITICAL: Check for duplicate Time In within last 60 seconds
+      const sixtySecondsAgo = new Date(Date.now() - 60000).toISOString();
+      const { data: recentLog } = await supabase
+        .from('visit_logs')
+        .select('id, time_in')
+        .eq('visitor_id', visitorId)
+        .gte('time_in', sixtySecondsAgo)
+        .maybeSingle();
+
+      if (recentLog) {
+        // Duplicate detected - show error
+        setErrMsg('You just timed in! Please wait before trying again.');
+        setPhase('error');
+        await signOut();
+        return;
+      }
+      
       // CRITICAL: Insert new visit log ONLY when no active session exists
-      // This prevents duplicate "Inside" entries
+      // This prevents duplicate "Inside" entries across all devices
       const { error } = await supabase.from('visit_logs').insert({
         visitor_id: visitorId,
         purpose: pid,

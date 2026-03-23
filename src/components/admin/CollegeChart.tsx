@@ -34,10 +34,10 @@ const Tip = ({ active, payload }: any) => {
   );
 };
 
-interface Props { filter: string; from?: string; to?: string; }
+interface Props { timeFilter: 'today' | 'week' | 'month' | 'custom'; from?: string; to?: string; }
 
-export function CollegeChart({ filter, from, to }: Props) {
-  const { data, isLoading } = useByCollege(filter, from, to);
+export function CollegeChart({ timeFilter, from, to }: Props) {
+  const { data, isLoading } = useByCollege(timeFilter, from, to);
   
   // React automatically escapes content - just ensure proper types
   const chart = (data ?? []).map(d => {

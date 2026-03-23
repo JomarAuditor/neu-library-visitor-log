@@ -20,6 +20,26 @@ import { PURPOSES }   from '@/types';
 
 const PAGE_SIZE = 50;
 
+type TF = 'today' | 'week' | 'month' | 'custom';
+
+function getRange(tf: TF, cfrom: string, cto: string) {
+  const t = new Date().toISOString().split('T')[0];
+  if (tf === 'today') return { from: t, to: t };
+  if (tf === 'week') {
+    const d = new Date(); 
+    d.setDate(d.getDate() - d.getDay());
+    return { from: d.toISOString().split('T')[0], to: t };
+  }
+  if (tf === 'month') {
+    const d = new Date();
+    return { 
+      from: new Date(d.getFullYear(), d.getMonth(), 1).toISOString().split('T')[0], 
+      to: t 
+    };
+  }
+  return { from: cfrom || t, to: cto || t };
+}
+
 function Badge({ children, color }: { children: React.ReactNode; color: string }) {
   const map: Record<string, string> = {
     green:  'bg-green-100 text-green-700',
@@ -53,6 +73,7 @@ function Highlight({ text, query, className }: { text: string; query: string; cl
 }
 
 export default function VisitorLogs() {
+  const [tf,            setTf]            = useState<TF>('today');
   const [dateFrom,      setDateFrom]      = useState('');
   const [dateTo,        setDateTo]        = useState('');
   const [page,          setPage]          = useState(1);
@@ -61,9 +82,11 @@ export default function VisitorLogs() {
   const [filterType,    setFilterType]    = useState('');
   const [filterPurpose, setFilterPurpose] = useState('');
 
+  const { from, to } = getRange(tf, dateFrom, dateTo);
+
   const { data, isLoading } = useVisitLogs(
-    'custom', '',
-    dateFrom || undefined, dateTo || undefined,
+    tf, '',
+    from, to,
     page - 1, PAGE_SIZE,
   );
 
@@ -86,19 +109,19 @@ export default function VisitorLogs() {
     return true;
   }), [filtered, filterType, filterPurpose]);
 
-  const hasDropFilter = !!(filterType || filterPurpose || dateFrom || dateTo);
+  const hasDropFilter = !!(filterType || filterPurpose);
 
   const clearAll = useCallback(() => {
     clearSearch();
     setFilterType(''); setFilterPurpose('');
-    setDateFrom(''); setDateTo('');
+    setTf('today'); setDateFrom(''); setDateTo('');
     setPage(1);
   }, [clearSearch]);
 
   const handleExport = async () => {
     setExporting(true);
     try {
-      const all = await fetchAllLogsCSV('custom', dateFrom || undefined, dateTo || undefined);
+      const all = await fetchAllLogsCSV(tf, from, to);
       exportCSV((all as any[]).map(l => ({
         Name:       l.visitors?.full_name ?? '',
         Email:      l.visitors?.email ?? '',
@@ -120,8 +143,29 @@ export default function VisitorLogs() {
     <>
       <PageHeader title="Visitor Logs" subtitle="NEU Library" />
 
+      {/* Time filter buttons */}
+      <div className="flex flex-wrap items-center gap-3 mb-4 animate-fade-up">
+        <div className="flex bg-white rounded-xl border border-neu-border shadow-sm p-1 gap-0.5">
+          {(['today','week','month','custom'] as TF[]).map(v => (
+            <button key={v} onClick={() => { setTf(v); setPage(1); }}
+              className={`px-4 py-2 rounded-lg text-xs font-semibold transition-all ${
+                tf === v ? 'bg-neu-blue text-white' : 'text-slate-500 hover:text-neu-blue hover:bg-neu-light'
+              }`}>
+              {v === 'today' ? 'Today' : v === 'week' ? 'This Week' : v === 'month' ? 'This Month' : 'Custom Range'}
+            </button>
+          ))}
+        </div>
+        {tf === 'custom' && (
+          <div className="flex flex-wrap gap-2 items-center">
+            <input type="date" className="input text-xs py-2 px-3 w-36" value={dateFrom} onChange={e => { setDateFrom(e.target.value); setPage(1); }} />
+            <span className="text-slate-400 text-xs">to</span>
+            <input type="date" className="input text-xs py-2 px-3 w-36" value={dateTo} onChange={e => { setDateTo(e.target.value); setPage(1); }} />
+          </div>
+        )}
+      </div>
+
       {/* ── Single toolbar row ── */}
-      <div className="flex items-center gap-3 mb-4">
+      <div className="flex items-center gap-3 mb-4 animate-fade-up" style={{ animationDelay: '0.1s' }}>
         {/* Search — takes up available space */}
         <div className="flex-1 max-w-xl">
           <SearchBar
@@ -148,7 +192,7 @@ export default function VisitorLogs() {
           Filters
           {hasDropFilter && (
             <span className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-red-500 text-white text-[9px] font-black flex items-center justify-center">
-              {[filterType, filterPurpose, dateFrom, dateTo].filter(Boolean).length}
+              {[filterType, filterPurpose].filter(Boolean).length}
             </span>
           )}
         </button>
@@ -176,7 +220,7 @@ export default function VisitorLogs() {
 
       {/* ── Expandable filter panel ── */}
       {showFilters && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4 p-4 rounded-2xl bg-white border border-slate-200 shadow-sm">
+        <div className="grid grid-cols-2 gap-3 mb-4 p-4 rounded-2xl bg-white border border-slate-200 shadow-sm animate-fade-up" style={{ animationDelay: '0.15s' }}>
           <div>
             <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1.5">
               Type
@@ -204,33 +248,11 @@ export default function VisitorLogs() {
               {PURPOSES.map(p => <option key={p} value={p}>{p}</option>)}
             </select>
           </div>
-          <div>
-            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1.5">
-              From
-            </label>
-            <input
-              type="date"
-              className="input text-sm py-2"
-              value={dateFrom}
-              onChange={e => { setDateFrom(e.target.value); setPage(1); }}
-            />
-          </div>
-          <div>
-            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1.5">
-              To
-            </label>
-            <input
-              type="date"
-              className="input text-sm py-2"
-              value={dateTo}
-              onChange={e => { setDateTo(e.target.value); setPage(1); }}
-            />
-          </div>
         </div>
       )}
 
       {/* ── Table ── */}
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden animate-fade-up" style={{ animationDelay: '0.2s' }}>
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 bg-slate-50/60">
           <div className="flex items-center gap-2.5">
             <ClipboardList size={15} className="text-slate-400" />

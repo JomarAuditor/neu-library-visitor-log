@@ -83,6 +83,22 @@ export default function RegisterPage() {
 
       // Time-In immediately
       const now = new Date().toISOString();
+      
+      // CRITICAL: Check for existing active session before time in
+      const { data: existingOpen } = await supabase
+        .from('visit_logs')
+        .select('id')
+        .eq('visitor_id', vid)
+        .is('time_out', null)
+        .maybeSingle();
+
+      if (existingOpen) {
+        // Already has an active session - don't create duplicate
+        setError('You already have an active session. Please time out first before registering again.');
+        setLoading(false);
+        return;
+      }
+      
       const { error: logError } = await supabase.from('visit_logs').insert({
         visitor_id: vid, purpose, time_in: now, visit_date: now.split('T')[0],
       });

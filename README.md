@@ -266,6 +266,11 @@ The database is normalized to **Third Normal Form (3NF)** for optimal data integ
 
 ### Entity Relationship Diagram
 
+![Database ERD](erd.png)
+![alt text](image-1.png)
+
+**Database Structure:**
+
 ```
 auth.users (Supabase managed)
     │

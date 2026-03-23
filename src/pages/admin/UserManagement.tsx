@@ -145,8 +145,19 @@ export default function UserManagement() {
 
   const revokeMutation = useMutation({
     mutationFn: async (email: string): Promise<void> => {
+      // Delete profile to revoke admin access
       const { error } = await supabase.from('profiles').delete().eq('email', email.toLowerCase().trim());
       if (error) throw error;
+      
+      // Force sign out the user by deleting their session
+      // Get all sessions for this email and delete them
+      const { data: authUsers } = await supabase.auth.admin.listUsers();
+      const targetUser = authUsers?.users.find(u => u.email?.toLowerCase() === email.toLowerCase());
+      
+      if (targetUser) {
+        // Sign out all sessions for this user
+        await supabase.auth.admin.signOut(targetUser.id);
+      }
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['visitors'] }); setRevokeTarget(null); },
   });
@@ -156,7 +167,7 @@ export default function UserManagement() {
       <PageHeader title="User Management" subtitle="Manage library visitors and admin access" />
 
       {/* ── Tab switcher ── */}
-      <div className="flex items-center gap-2 mb-6">
+      <div className="flex items-center gap-2 mb-6 animate-fade-up">
         <button onClick={() => setActiveTab('visitors')}
           className={`flex items-center gap-2 px-5 py-2.5 rounded-full text-sm font-black transition-all ${
             activeTab === 'visitors'
@@ -179,7 +190,7 @@ export default function UserManagement() {
       {activeTab === 'visitors' && (
         <>
           {/* Summary tiles */}
-          <div className="grid grid-cols-3 gap-4 mb-5">
+          <div className="grid grid-cols-3 gap-4 mb-5 animate-fade-up" style={{ animationDelay: '0.1s' }}>
             {[
               { label: 'Total Visitors', value: counts.visitors, color: 'text-blue-600',  bg: 'bg-blue-50'  },
               { label: 'Active',         value: counts.active,   color: 'text-green-600', bg: 'bg-green-50' },
@@ -193,7 +204,7 @@ export default function UserManagement() {
           </div>
 
           {/* ── Search row ── */}
-          <div className="flex items-center gap-3 mb-4">
+          <div className="flex items-center gap-3 mb-4 animate-fade-up" style={{ animationDelay: '0.15s' }}>
             {/* Search bar — wide */}
             <div className="flex-1 max-w-xl">
               <SearchBar
@@ -245,7 +256,7 @@ export default function UserManagement() {
           </div>
 
           {/* Table */}
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden animate-fade-up" style={{ animationDelay: '0.2s' }}>
             <div className="flex items-center gap-2.5 px-5 py-4 border-b border-slate-100 bg-slate-50/50">
               <Users size={15} className="text-slate-400" />
               <span className="font-black text-slate-700 text-sm">Registered Members</span>
@@ -366,7 +377,7 @@ export default function UserManagement() {
 
       {/* ── ADMINS TAB ── */}
       {activeTab === 'admins' && (
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden animate-fade-up" style={{ animationDelay: '0.1s' }}>
           <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 bg-slate-50/50">
             <div className="flex items-center gap-2.5">
               <Crown size={15} className="text-amber-500" />

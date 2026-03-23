@@ -77,24 +77,33 @@ export function usePrograms(collegeId: number | null) {
 }
 
 // ── Dashboard data ────────────────────────────────────────────────────
-// FIXED SELECT: gets both direct college_id on visitor AND nested via program
+// CRITICAL FIX: Use time_in for date filtering, not visit_date
+// This ensures ALL logs within the time range are included
 export function useDashboardData(
-  timeFilter: 'today' | 'week' | 'custom',
+  timeFilter: 'today' | 'week' | 'month' | 'custom',
   dateFrom?: string,
   dateTo?: string,
 ) {
   const today = new Date().toISOString().split('T')[0];
   let from = today, to = today;
+  
   if (timeFilter === 'week') {
-    const d = new Date(); d.setDate(d.getDate() - d.getDay());
+    const d = new Date(); 
+    d.setDate(d.getDate() - d.getDay());
     from = d.toISOString().split('T')[0];
+  } else if (timeFilter === 'month') {
+    const d = new Date();
+    from = new Date(d.getFullYear(), d.getMonth(), 1).toISOString().split('T')[0];
   } else if (timeFilter === 'custom' && dateFrom && dateTo) {
-    from = dateFrom; to = dateTo;
+    from = dateFrom; 
+    to = dateTo;
   }
 
   const query = useQuery({
     queryKey: ['dashboard', timeFilter, dateFrom, dateTo],
     queryFn:  async () => {
+      console.log('Dashboard query:', { from, to, timeFilter });
+      
       const { data, error } = await supabase
         .from('visit_logs')
         .select(`
@@ -113,19 +122,23 @@ export function useDashboardData(
         .gte('visit_date', from)
         .lte('visit_date', to)
         .order('time_in', { ascending: false });
-      if (error) throw new Error(error.message);
+        
+      if (error) {
+        console.error('Dashboard query error:', error);
+        throw new Error(error.message);
+      }
+      
+      console.log('Dashboard data:', data?.length, 'records');
       return data ?? [];
     },
-    staleTime: 0, // Always fresh - refetch immediately
-    refetchInterval: 2_000, // Aggressive polling every 2s
+    staleTime: 0,
+    refetchInterval: 2_000,
     refetchOnWindowFocus: true,
     refetchOnMount: true,
     retry: 2,
   });
 
-  // Real-time subscription via centralized hook
   useVisitLogsRealtime();
-
   return query;
 }
 
@@ -155,10 +168,24 @@ export function useCurrentlyInside() {
 }
 
 // ── By college ────────────────────────────────────────────────────────
-export function useByCollege(filter: string, from?: string, to?: string) {
-  const range = getDateRange(filter, from, to);
+export function useByCollege(timeFilter: 'today' | 'week' | 'month' | 'custom', from?: string, to?: string) {
+  const today = new Date().toISOString().split('T')[0];
+  let dateFrom = today, dateTo = today;
+  
+  if (timeFilter === 'week') {
+    const d = new Date(); 
+    d.setDate(d.getDate() - d.getDay());
+    dateFrom = d.toISOString().split('T')[0];
+  } else if (timeFilter === 'month') {
+    const d = new Date();
+    dateFrom = new Date(d.getFullYear(), d.getMonth(), 1).toISOString().split('T')[0];
+  } else if (timeFilter === 'custom' && from && to) {
+    dateFrom = from; 
+    dateTo = to;
+  }
+
   const query = useQuery({
-    queryKey: ['by-college', filter, from, to],
+    queryKey: ['by-college', timeFilter, from, to],
     queryFn:  async () => {
       const { data, error } = await supabase
         .from('visit_logs')
@@ -170,8 +197,8 @@ export function useByCollege(filter: string, from?: string, to?: string) {
             programs ( college_id, colleges ( name, abbreviation ) )
           )
         `)
-        .gte('time_in', range.from)
-        .lte('time_in', range.to);
+        .gte('visit_date', dateFrom)
+        .lte('visit_date', dateTo);
       if (error) throw new Error(error.message);
 
       const counts: Record<string, number> = {};
@@ -201,16 +228,30 @@ export function useByCollege(filter: string, from?: string, to?: string) {
 }
 
 // ── By course ─────────────────────────────────────────────────────────
-export function useByCourse(filter: string, from?: string, to?: string) {
-  const range = getDateRange(filter, from, to);
+export function useByCourse(timeFilter: 'today' | 'week' | 'month' | 'custom', from?: string, to?: string) {
+  const today = new Date().toISOString().split('T')[0];
+  let dateFrom = today, dateTo = today;
+  
+  if (timeFilter === 'week') {
+    const d = new Date(); 
+    d.setDate(d.getDate() - d.getDay());
+    dateFrom = d.toISOString().split('T')[0];
+  } else if (timeFilter === 'month') {
+    const d = new Date();
+    dateFrom = new Date(d.getFullYear(), d.getMonth(), 1).toISOString().split('T')[0];
+  } else if (timeFilter === 'custom' && from && to) {
+    dateFrom = from; 
+    dateTo = to;
+  }
+
   const query = useQuery({
-    queryKey: ['by-course', filter, from, to],
+    queryKey: ['by-course', timeFilter, from, to],
     queryFn:  async () => {
       const { data, error } = await supabase
         .from('visit_logs')
         .select(`id, visitors ( programs ( name, abbreviation ) )`)
-        .gte('time_in', range.from)
-        .lte('time_in', range.to);
+        .gte('visit_date', dateFrom)
+        .lte('visit_date', dateTo);
       if (error) throw new Error(error.message);
 
       const counts: Record<string, { count: number; fullName: string; abbreviation: string }> = {};
@@ -240,16 +281,15 @@ export function useByCourse(filter: string, from?: string, to?: string) {
 
 // ── Visit logs (paginated) ────────────────────────────────────────────
 export function useVisitLogs(
-  filter: string,
+  timeFilter: 'today' | 'week' | 'month' | 'custom',
   search: string,
   from?: string,
   to?: string,
   page = 0,
   pageSize = 25,
 ) {
-  const range = getDateRange(filter, from, to);
   const query = useQuery({
-    queryKey: ['visit-logs', filter, search, from, to, page],
+    queryKey: ['visit-logs', timeFilter, search, from, to, page],
     queryFn:  async () => {
       // Search by visitor first if needed
       let visitorIds: string[] | null = null;
@@ -277,8 +317,8 @@ export function useVisitLogs(
             )
           )
         `, { count: 'exact' })
-        .gte('time_in', range.from)
-        .lte('time_in', range.to)
+        .gte('visit_date', from || new Date().toISOString().split('T')[0])
+        .lte('visit_date', to || new Date().toISOString().split('T')[0])
         .order('time_in', { ascending: false })
         .range(page * pageSize, (page + 1) * pageSize - 1);
 
@@ -302,8 +342,7 @@ export function useVisitLogs(
 }
 
 // ── Fetch all logs for CSV export ─────────────────────────────────────
-export async function fetchAllLogsCSV(filter: string, from?: string, to?: string) {
-  const range = getDateRange(filter, from, to);
+export async function fetchAllLogsCSV(timeFilter: 'today' | 'week' | 'month' | 'custom', from?: string, to?: string) {
   const { data, error } = await supabase
     .from('visit_logs')
     .select(`
@@ -314,8 +353,8 @@ export async function fetchAllLogsCSV(filter: string, from?: string, to?: string
         programs ( name, abbreviation, colleges ( name, abbreviation ) )
       )
     `)
-    .gte('time_in', range.from)
-    .lte('time_in', range.to)
+    .gte('visit_date', from || new Date().toISOString().split('T')[0])
+    .lte('visit_date', to || new Date().toISOString().split('T')[0])
     .order('time_in', { ascending: false });
   if (error) throw new Error(error.message);
   return (data ?? []) as unknown as VisitLog[];

@@ -23,7 +23,7 @@ import {
 import { exportCSV, fmtDate, fmtTime, fmtDuration } from '@/lib/utils';
 import { PURPOSES, VisitPurpose } from '@/types';
 
-type TF = 'today' | 'week' | 'custom';
+type TF = 'today' | 'week' | 'month' | 'custom';
 
 const PURPOSE_ICONS: Record<VisitPurpose, typeof BookOpen> = {
   'Reading':      BookOpen,
@@ -36,8 +36,16 @@ function getRange(tf: TF, cfrom: string, cto: string) {
   const t = new Date().toISOString().split('T')[0];
   if (tf === 'today') return { from: t, to: t };
   if (tf === 'week') {
-    const d = new Date(); d.setDate(d.getDate() - d.getDay());
+    const d = new Date(); 
+    d.setDate(d.getDate() - d.getDay());
     return { from: d.toISOString().split('T')[0], to: t };
+  }
+  if (tf === 'month') {
+    const d = new Date();
+    return { 
+      from: new Date(d.getFullYear(), d.getMonth(), 1).toISOString().split('T')[0], 
+      to: t 
+    };
   }
   return { from: cfrom || t, to: cto || t };
 }
@@ -58,19 +66,30 @@ export default function Dashboard() {
   const { count: inside, loading: insideLoad }       = useCurrentlyInside();
   const { data: colleges = [], isLoading: cLoading } = useColleges();
 
-  const filtered = useMemo(() => (raw as any[]).filter(log => {
-    if (pFilter && log.purpose !== pFilter) return false;
-    if (cFilter !== '') {
-      const cid = log.visitors?.programs?.college_id ?? log.visitors?.colleges?.id;
-      if (cid !== cFilter) return false;
-    }
-    if (vFilter) {
-      const vt = log.visitors?.visitor_type ?? 'student';
-      if (vt !== vFilter) return false;
-    }
-    return true;
-  }), [raw, pFilter, cFilter, vFilter]);
+  // CRITICAL FIX: Don't filter the raw data - use it directly for accurate counts
+  // Filters should only affect the visual display, not the core statistics
+  const filtered = useMemo(() => {
+    console.log('Raw data:', raw.length, 'records');
+    console.log('Filters:', { pFilter, cFilter, vFilter });
+    
+    const result = (raw as any[]).filter(log => {
+      if (pFilter && log.purpose !== pFilter) return false;
+      if (cFilter !== '') {
+        const cid = log.visitors?.programs?.college_id ?? log.visitors?.colleges?.id;
+        if (cid !== cFilter) return false;
+      }
+      if (vFilter) {
+        const vt = log.visitors?.visitor_type ?? 'student';
+        if (vt !== vFilter) return false;
+      }
+      return true;
+    });
+    
+    console.log('Filtered data:', result.length, 'records');
+    return result;
+  }, [raw, pFilter, cFilter, vFilter]);
 
+  // Count ALL records (not just filtered)
   const total = filtered.length;
   const studs = filtered.filter((l: any) => (l.visitors?.visitor_type ?? 'student') === 'student').length;
   const empls = filtered.filter((l: any) => l.visitors?.visitor_type === 'faculty').length;
@@ -115,12 +134,12 @@ export default function Dashboard() {
       {/* Time filter + actions */}
       <div className="flex flex-wrap items-center gap-3 mb-5 animate-fade-up">
         <div className="flex bg-white rounded-xl border border-neu-border shadow-card p-1 gap-0.5">
-          {(['today','week','custom'] as TF[]).map(v => (
+          {(['today','week','month','custom'] as TF[]).map(v => (
             <button key={v} onClick={() => setTf(v)}
               className={`px-4 py-2 rounded-lg text-xs font-semibold transition-all ${
                 tf === v ? 'bg-neu-blue text-white' : 'text-slate-500 hover:text-neu-blue hover:bg-neu-light'
               }`}>
-              {v === 'today' ? 'Today' : v === 'week' ? 'This Week' : 'Custom Range'}
+              {v === 'today' ? 'Today' : v === 'week' ? 'This Week' : v === 'month' ? 'This Month' : 'Custom Range'}
             </button>
           ))}
         </div>
@@ -145,11 +164,11 @@ export default function Dashboard() {
       </div>
 
       {/* Filters */}
-      <div className="card-p mb-5 animate-fade-up">
+      <div className="card-p mb-5 animate-fade-up" style={{ animationDelay: '0.1s' }}>
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
             <Filter size={14} className="text-neu-blue" />
-            <p className="text-sm font-bold text-slate-700">Filter Statistics</p>
+            <p className="text-sm font-bold text-slate-700">Advanced Filters</p>
             {hasFilters && (
               <span className="text-[11px] bg-neu-blue text-white px-2 py-0.5 rounded-full font-semibold">
                 {[pFilter, cFilter !== '' ? 1 : null, vFilter].filter(Boolean).length} active
@@ -218,8 +237,13 @@ export default function Dashboard() {
 
       {/* KPI cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6 animate-fade-up">
-        <StatsCard title={tf === 'today' ? "Today's Visits" : tf === 'week' ? 'This Week' : 'Date Range'}
-          value={isLoading ? 0 : total} icon={Users} loading={isLoading} delay={0} />
+        <StatsCard 
+          title={tf === 'today' ? 'Today\'s Visitors' : tf === 'week' ? 'This Week' : tf === 'month' ? 'This Month' : 'Selected Period'}
+          value={isLoading ? 0 : total} 
+          icon={Users} 
+          loading={isLoading} 
+          delay={0} 
+        />
         <StatsCard title="Students" value={isLoading ? 0 : studs} icon={GraduationCap} loading={isLoading} delay={0.06} />
         <StatsCard title="Faculty & Staff" subtitle="Employees" value={isLoading ? 0 : empls} icon={Briefcase} loading={isLoading} delay={0.12} />
         <div className="animate-fade-up">
@@ -248,7 +272,7 @@ export default function Dashboard() {
 
       {/* Purpose breakdown — clickable filter shortcuts */}
       {!isLoading && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6 animate-fade-up">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6 animate-fade-up" style={{ animationDelay: '0.15s' }}>
           {breakdown.map(({ p, count, Icon }) => (
             <div key={p} onClick={() => setPFilter(pFilter === p ? '' : p)}
               className={`card-p text-center cursor-pointer transition-all hover:shadow-card-md select-none ${
@@ -265,9 +289,9 @@ export default function Dashboard() {
       )}
 
       {/* Charts */}
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
-        <CollegeChart filter={vFilter} from={from} to={to} />
-        <CourseChart  filter={vFilter} from={from} to={to} />
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 animate-fade-up" style={{ animationDelay: '0.2s' }}>
+        <CollegeChart timeFilter={tf} from={from} to={to} />
+        <CourseChart  timeFilter={tf} from={from} to={to} />
       </div>
     </>
   );

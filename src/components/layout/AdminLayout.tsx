@@ -4,6 +4,7 @@ import { ReactNode, useState, useEffect } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { AdminSidebar }          from './AdminSidebar';
 import { useAuth, checkIsAdmin } from '@/hooks/useAuth';
+import { supabase } from '@/lib/supabase';
 import { ShieldX, ArrowLeft } from 'lucide-react';
 
 // Unauthorized Admin Popup
@@ -68,36 +69,55 @@ function UnauthorizedAdminPopup({ email, onBack }: { email: string; onBack: () =
 
 // WORLD-CLASS SECURITY: Enterprise admin route guard
 export function AdminLayout({ children }: { children: ReactNode }) {
-  const { user, profile, loading } = useAuth();
+  const { user, profile, loading, signOut } = useAuth();
   const navigate = useNavigate();
 
   const [showUnauthorized, setShowUnauthorized] = useState(false);
+  const [checkingAccess, setCheckingAccess] = useState(false);
 
   // Check authorization and show popup if unauthorized
   useEffect(() => {
-    if (!loading && user && !checkIsAdmin(user.email)) {
+    if (!loading && user && user.email && !checkIsAdmin(user.email)) {
       setShowUnauthorized(true);
     }
   }, [user, loading]);
 
-  // SECURITY LAYER 1: Prevent data flicker - show loading state
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-100">
-        <div className="text-center">
-          <div className="w-12 h-12 border-[3px] border-neu-blue border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-          <p className="text-sm text-slate-600 font-semibold">Verifying credentials…</p>
-          <p className="text-xs text-slate-400 mt-1">Securing admin access</p>
-        </div>
-      </div>
-    );
-  }
+  // CRITICAL: Check if admin access was revoked (profile deleted)
+  useEffect(() => {
+    if (!loading && user && user.email && checkIsAdmin(user.email)) {
+      setCheckingAccess(true);
+      
+      // Check if profile still exists
+      supabase
+        .from('profiles')
+        .select('id, role')
+        .eq('email', user.email.toLowerCase())
+        .maybeSingle()
+        .then(({ data, error }) => {
+          setCheckingAccess(false);
+          
+          if (error || !data) {
+            // Profile deleted - admin access revoked
+            console.warn('Admin access revoked for:', user.email);
+            signOut().then(() => {
+              navigate('/admin/login', { replace: true });
+            });
+          } else if (!['admin', 'staff'].includes(data.role)) {
+            // Role changed - no longer admin
+            console.warn('Admin role removed for:', user.email);
+            signOut().then(() => {
+              navigate('/admin/login', { replace: true });
+            });
+          }
+        });
+    }
+  }, [user, loading, signOut, navigate]);
 
-  // SECURITY LAYER 2: Not authenticated - redirect to login
+  // SECURITY LAYER 1: Not authenticated - redirect to login
   if (!user) return <Navigate to="/admin/login" replace />;
 
-  // SECURITY LAYER 3: Hard-coded admin whitelist validation with popup
-  if (!checkIsAdmin(user.email)) {
+  // SECURITY LAYER 2: Hard-coded admin whitelist validation with popup
+  if (user && user.email && !checkIsAdmin(user.email)) {
     return (
       <>
         {/* Background blur */}
@@ -113,10 +133,10 @@ export function AdminLayout({ children }: { children: ReactNode }) {
     );
   }
 
-  // SECURITY LAYER 4: Profile validation
+  // SECURITY LAYER 3: Profile validation
   if (!profile) return <Navigate to="/admin/login" replace />;
 
-  // SECURITY LAYER 5: Role-based access control
+  // SECURITY LAYER 4: Role-based access control
   if (!['admin', 'staff'].includes(profile.role)) {
     return (
       <div className="min-h-screen bg-slate-100 flex items-center justify-center">

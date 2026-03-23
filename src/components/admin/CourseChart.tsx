@@ -24,10 +24,10 @@ const Tip = ({ active, payload, label }: any) => {
   );
 };
 
-interface Props { filter: string; from?: string; to?: string; }
+interface Props { timeFilter: 'today' | 'week' | 'month' | 'custom'; from?: string; to?: string; }
 
-export function CourseChart({ filter, from, to }: Props) {
-  const { data: rawData, isLoading } = useByCourse(filter, from, to);
+export function CourseChart({ timeFilter, from, to }: Props) {
+  const { data: rawData, isLoading } = useByCourse(timeFilter, from, to);
   
   // Filter out N/A entries and prepare data
   const data = rawData?.filter(item => 
