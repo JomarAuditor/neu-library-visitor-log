@@ -240,7 +240,7 @@ export default function VisitorHome() {
     try {
       const now = new Date().toISOString();
       
-      // SMART TOGGLE: Check and close any existing session in one go
+      // CRITICAL: Close ANY existing open session first
       const { data: existingOpen } = await supabase
         .from('visit_logs')
         .select('id, time_in')
@@ -249,15 +249,18 @@ export default function VisitorHome() {
         .maybeSingle();
 
       if (existingOpen) {
-        // Close existing session immediately
         const dur = calcDurationMinutes(existingOpen.time_in, now);
-        await supabase
+        const { error: updateError } = await supabase
           .from('visit_logs')
           .update({ time_out: now, duration_minutes: dur })
           .eq('id', existingOpen.id);
+        
+        if (updateError) {
+          console.error('Error closing session:', updateError);
+        }
       }
       
-      // Insert new session immediately (no delay)
+      // Try to insert new session
       const { error } = await supabase.from('visit_logs').insert({
         visitor_id: visitorId,
         purpose: pid,
@@ -266,8 +269,35 @@ export default function VisitorHome() {
       });
       
       if (error) {
-        console.error('Time in error:', error);
-        throw error;
+        // If duplicate error, try one more time after closing all sessions
+        if (error.message.includes('duplicate') || error.message.includes('unique')) {
+          // Force close ALL sessions for this visitor
+          await supabase
+            .from('visit_logs')
+            .update({ 
+              time_out: now, 
+              duration_minutes: 0 
+            })
+            .eq('visitor_id', visitorId)
+            .is('time_out', null);
+          
+          // Try insert again
+          const { error: retryError } = await supabase.from('visit_logs').insert({
+            visitor_id: visitorId,
+            purpose: pid,
+            time_in: now,
+            visit_date: now.split('T')[0],
+          });
+          
+          if (retryError) {
+            setErrMsg('Database constraint active. Please contact admin to remove the constraint.');
+            setPhase('error');
+            await signOut();
+            return;
+          }
+        } else {
+          throw error;
+        }
       }
 
       // Time string in PHT
