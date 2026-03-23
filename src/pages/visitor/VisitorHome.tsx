@@ -205,10 +205,17 @@ export default function VisitorHome() {
 
       if (sessErr) throw sessErr;
 
+      // DEBUG: Log what we found
+      console.log('[DEBUG] Open sessions found:', openSessions?.length || 0);
+      if (openSessions && openSessions.length > 0) {
+        console.log('[DEBUG] Session IDs:', openSessions.map(s => s.id));
+      }
+
       // ═══════════════════════════════════════════════════════════
       // BRANCH A: USER IS INSIDE → TIME OUT
       // ═══════════════════════════════════════════════════════════
       if (openSessions && openSessions.length > 0) {
+        console.log('[DEBUG] BRANCH A: Timing out', openSessions.length, 'session(s)');
         const now = new Date().toISOString();
         const timeStr = new Date().toLocaleTimeString('en-PH', { 
           hour: '2-digit', minute: '2-digit', hour12: true 
@@ -243,6 +250,7 @@ export default function VisitorHome() {
       // ═══════════════════════════════════════════════════════════
       // BRANCH B: USER IS OUTSIDE → SHOW PURPOSE PICKER
       // ═══════════════════════════════════════════════════════════
+      console.log('[DEBUG] BRANCH B: No open sessions, showing purpose picker');
       setPhase('select-purpose');
       // doTimeIn() will be called when user picks a purpose
 
