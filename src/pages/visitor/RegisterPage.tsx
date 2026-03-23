@@ -10,6 +10,7 @@ import { supabase }          from '@/lib/supabase';
 import { useAuth }           from '@/hooks/useAuth';
 import { useColleges, useAllPrograms } from '@/hooks/useStats';
 import { PURPOSES, VisitPurpose, VisitorType, PURPOSE_EMOJI } from '@/types';
+import { calcDurationMinutes } from '@/lib/utils';
 
 export default function RegisterPage() {
   const navigate     = useNavigate();
@@ -84,26 +85,46 @@ export default function RegisterPage() {
       // Time-In immediately
       const now = new Date().toISOString();
       
-      // CRITICAL: Check for existing active session before time in
+      // SMART TOGGLE: Check for existing active session before time in
       const { data: existingOpen } = await supabase
         .from('visit_logs')
-        .select('id')
+        .select('id, time_in')
         .eq('visitor_id', vid)
         .is('time_out', null)
         .maybeSingle();
 
       if (existingOpen) {
-        // Already has an active session - don't create duplicate
-        setError('You already have an active session. Please time out first before registering again.');
-        setLoading(false);
-        return;
+        // Already has active session - close it first, then create new one
+        const dur = calcDurationMinutes(existingOpen.time_in, now);
+        await supabase
+          .from('visit_logs')
+          .update({ time_out: now, duration_minutes: dur })
+          .eq('id', existingOpen.id);
       }
       
       const { error: logError } = await supabase.from('visit_logs').insert({
         visitor_id: vid, purpose, time_in: now, visit_date: now.split('T')[0],
       });
 
-      if (logError) throw logError;
+      if (logError) {
+        // If duplicate error, force close all sessions and retry
+        if (logError.message.includes('duplicate') || logError.message.includes('unique')) {
+          await supabase
+            .from('visit_logs')
+            .update({ time_out: now, duration_minutes: 0 })
+            .eq('visitor_id', vid)
+            .is('time_out', null);
+          
+          // Retry insert
+          const { error: retryError } = await supabase.from('visit_logs').insert({
+            visitor_id: vid, purpose, time_in: now, visit_date: now.split('T')[0],
+          });
+          
+          if (retryError) throw retryError;
+        } else {
+          throw logError;
+        }
+      }
 
       // Get time string for success page
       const timeStr = new Date().toLocaleTimeString('en-PH', {
