@@ -10,6 +10,8 @@ import AdminLogin     from '@/pages/admin/AdminLogin';
 import Dashboard      from '@/pages/admin/Dashboard';
 import VisitorLogs    from '@/pages/admin/VisitorLogs';
 import UserManagement from '@/pages/admin/UserManagement';
+import PrivacyPolicy  from '@/pages/PrivacyPolicy';
+import TermsOfService from '@/pages/TermsOfService';
 
 const qc = new QueryClient({
   defaultOptions: {
@@ -57,6 +59,10 @@ export default function App() {
             <Route path="/register" element={<RegisterPage />} />
             {/* Dedicated success screen (Time-In / Time-Out result) */}
             <Route path="/success"  element={<SuccessPage  />} />
+
+            {/* ── Legal pages (required for Google OAuth) ── */}
+            <Route path="/privacy" element={<PrivacyPolicy />} />
+            <Route path="/terms"   element={<TermsOfService />} />
 
             {/* ── Admin login — standalone ── */}
             <Route path="/admin/login" element={<AdminLogin />} />

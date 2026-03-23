@@ -79,25 +79,36 @@ export default function RegisterPage() {
         }
       }
 
-      // 2. Close any existing open sessions FIRST (safety net)
+      // ══════════════════════════════════════════════════════════════════
+      // STEP 2: Close any existing open sessions FIRST (safety net)
+      // Prevents duplicates if user registered on another device/tab
+      // ══════════════════════════════════════════════════════════════════
       const { data: openSessions } = await supabase
         .from('visit_logs')
         .select('id, time_in')
         .eq('visitor_id', vid)
-        .is('time_out', null);
+        .is('time_out', null)
+        .limit(10);
 
       if (openSessions && openSessions.length > 0) {
         const now = new Date().toISOString();
-        for (const s of openSessions) {
+        
+        // Close all open sessions in parallel
+        const updatePromises = openSessions.map(s => {
           const dur = calcDurationMinutes(s.time_in, now);
-          await supabase.from('visit_logs').update({
+          return supabase.from('visit_logs').update({
             time_out: now,
-            duration_minutes: Math.max(0, dur),
+            duration_minutes: Math.max(0, Math.round(dur)),
           }).eq('id', s.id);
-        }
+        });
+
+        await Promise.all(updatePromises);
       }
 
-      // 3. Insert exactly ONE time-in record
+      // ══════════════════════════════════════════════════════════════════
+      // STEP 3: Insert exactly ONE time-in record
+      // Safe because we just closed all open sessions above
+      // ══════════════════════════════════════════════════════════════════
       const now = new Date().toISOString();
       const { error: logErr } = await supabase.from('visit_logs').insert({
         visitor_id: vid,

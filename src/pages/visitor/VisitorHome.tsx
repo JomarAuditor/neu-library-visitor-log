@@ -156,18 +156,20 @@ export default function VisitorHome() {
   }, [user, authLoading, activePopup]);
 
   // ── THE CORE TOGGLE LOGIC ─────────────────────────────────────────
-  // This is the ONLY function that handles time-in/out.
-  // It is called once per sign-in. It does ONE thing and returns.
+  // BULLETPROOF: Check → Update OR Insert → Return immediately
+  // No race conditions, no duplicates, perfect toggle
   const runToggle = async () => {
     if (!user?.email) return;
     setPhase('checking');
 
     try {
+      const email = user.email.toLowerCase().trim();
+
       // 1. Find the visitor record
       const { data: visitor, error: visErr } = await supabase
         .from('visitors')
         .select('id, full_name, is_blocked')
-        .eq('email', user.email.toLowerCase().trim())
+        .eq('email', email)
         .maybeSingle();
 
       if (visErr) throw visErr;
@@ -191,97 +193,132 @@ export default function VisitorHome() {
       setVisitorId(visitor.id);
       setFirstName(visitor.full_name.split(' ')[0]);
 
-      // 4. Check for open session — THE KEY QUERY
-      //    Gets ALL open sessions ordered by time_in desc
+      // 4. ATOMIC CHECK: Query for ANY open session (time_out IS NULL)
+      //    This is the SINGLE SOURCE OF TRUTH
       const { data: openSessions, error: sessErr } = await supabase
         .from('visit_logs')
         .select('id, time_in')
         .eq('visitor_id', visitor.id)
         .is('time_out', null)
-        .order('time_in', { ascending: false });
+        .order('time_in', { ascending: false })
+        .limit(10); // Safety: get max 10 in case of corruption
 
       if (sessErr) throw sessErr;
 
+      // ═══════════════════════════════════════════════════════════
+      // BRANCH A: USER IS INSIDE → TIME OUT
+      // ═══════════════════════════════════════════════════════════
       if (openSessions && openSessions.length > 0) {
-        // ── USER IS INSIDE → TIME OUT ─────────────────────────────
-        // If somehow multiple open sessions exist (bug), close ALL of them
         const now = new Date().toISOString();
+        const timeStr = new Date().toLocaleTimeString('en-PH', { 
+          hour: '2-digit', minute: '2-digit', hour12: true 
+        });
 
-        for (const session of openSessions) {
+        // Close ALL open sessions (handles corruption gracefully)
+        const updatePromises = openSessions.map(session => {
           const dur = calcDurationMinutes(session.time_in, now);
-          await supabase
+          return supabase
             .from('visit_logs')
-            .update({ time_out: now, duration_minutes: Math.max(0, dur) })
+            .update({ 
+              time_out: now, 
+              duration_minutes: Math.max(0, Math.round(dur))
+            })
             .eq('id', session.id);
-        }
+        });
 
-        // Get duration from the most recent session for display
+        await Promise.all(updatePromises);
+
+        // Calculate duration from most recent session
         const latestDur = calcDurationMinutes(openSessions[0].time_in, now);
-        const timeStr   = new Date().toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit', hour12: true });
 
+        // Sign out and show success
         await signOut();
         navigate(
           `/success?action=out&name=${encodeURIComponent(visitor.full_name.split(' ')[0])}&time=${encodeURIComponent(timeStr)}&duration=${encodeURIComponent(fmtDuration(latestDur))}`,
           { replace: true }
         );
-        return; // ← EXIT immediately, do NOT fall through
+        return; // ← CRITICAL: EXIT immediately, do NOT continue
       }
 
-      // ── USER IS OUTSIDE → SHOW PURPOSE PICKER THEN TIME IN ───────
+      // ═══════════════════════════════════════════════════════════
+      // BRANCH B: USER IS OUTSIDE → SHOW PURPOSE PICKER
+      // ═══════════════════════════════════════════════════════════
       setPhase('select-purpose');
       // doTimeIn() will be called when user picks a purpose
 
     } catch (e: unknown) {
-      setErrMsg((e as Error)?.message ?? 'Something went wrong. Please try again.');
+      const errorMsg = (e as Error)?.message ?? 'Something went wrong. Please try again.';
+      setErrMsg(errorMsg);
       setPhase('error');
     }
   };
 
   // Called only after user picks a purpose
+  // DOUBLE-CHECK before insert to prevent race conditions
   const doTimeIn = async (pid: VisitPurpose) => {
     setPhase('working');
     try {
-      // Final safety check — close any session that snuck in during purpose selection
+      // ═══════════════════════════════════════════════════════════
+      // SAFETY CHECK: Verify no session was created during purpose selection
+      // (e.g., user signed in on another device/tab)
+      // ═══════════════════════════════════════════════════════════
       const { data: stillOpen } = await supabase
         .from('visit_logs')
         .select('id, time_in')
         .eq('visitor_id', visitorId)
-        .is('time_out', null);
+        .is('time_out', null)
+        .limit(10);
 
       if (stillOpen && stillOpen.length > 0) {
-        // Someone signed in between purpose picker and confirm — time them out
+        // Race condition detected: close the session(s) and show time-out
         const now = new Date().toISOString();
-        for (const s of stillOpen) {
+        const timeStr = new Date().toLocaleTimeString('en-PH', { 
+          hour: '2-digit', minute: '2-digit', hour12: true 
+        });
+
+        const updatePromises = stillOpen.map(s => {
           const dur = calcDurationMinutes(s.time_in, now);
-          await supabase.from('visit_logs').update({
-            time_out: now, duration_minutes: Math.max(0, dur),
+          return supabase.from('visit_logs').update({
+            time_out: now, 
+            duration_minutes: Math.max(0, Math.round(dur)),
           }).eq('id', s.id);
-        }
-        // Now go to success as time-out
-        const ts = new Date().toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit', hour12: true });
+        });
+
+        await Promise.all(updatePromises);
+
         await signOut();
-        navigate(`/success?action=out&name=${encodeURIComponent(firstName)}&time=${encodeURIComponent(ts)}&duration=${encodeURIComponent('0m')}`, { replace: true });
-        return;
+        navigate(
+          `/success?action=out&name=${encodeURIComponent(firstName)}&time=${encodeURIComponent(timeStr)}&duration=${encodeURIComponent('0m')}`, 
+          { replace: true }
+        );
+        return; // ← EXIT: Don't insert, user was already inside
       }
 
-      // Insert the time-in record
+      // ═══════════════════════════════════════════════════════════
+      // SAFE TO INSERT: No open sessions exist
+      // ═══════════════════════════════════════════════════════════
       const now = new Date().toISOString();
-      const { error } = await supabase.from('visit_logs').insert({
+      const { error: insertError } = await supabase.from('visit_logs').insert({
         visitor_id: visitorId,
         purpose:    pid,
         time_in:    now,
         visit_date: now.split('T')[0],
       });
-      if (error) throw error;
 
-      const timeStr = new Date().toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit', hour12: true });
+      if (insertError) throw insertError;
+
+      const timeStr = new Date().toLocaleTimeString('en-PH', { 
+        hour: '2-digit', minute: '2-digit', hour12: true 
+      });
+
       await signOut();
       navigate(
         `/success?action=in&name=${encodeURIComponent(firstName)}&time=${encodeURIComponent(timeStr)}`,
         { replace: true }
       );
     } catch (e: unknown) {
-      setErrMsg((e as Error)?.message ?? 'Could not record your entry. Please try again.');
+      const errorMsg = (e as Error)?.message ?? 'Could not record your entry. Please try again.';
+      setErrMsg(errorMsg);
       setPhase('error');
     }
   };

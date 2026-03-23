@@ -161,9 +161,24 @@ export class RateLimiter {
 export const authRateLimiter = new RateLimiter();
 
 /**
- * Secure logging utility that sanitizes sensitive data
+ * Sanitize log messages to prevent log injection (CWE-117)
+ * Removes newlines, carriage returns, and control characters
+ */
+export function sanitizeLogMessage(message: unknown): string {
+  if (!message) return '';
+  
+  return String(message)
+    .replace(/[\r\n\t]/g, ' ')  // Replace newlines and tabs with spaces
+    .replace(/[\x00-\x1F\x7F]/g, '')  // Remove control characters
+    .slice(0, 500);  // Limit length
+}
+
+/**
+ * Secure logging utility that sanitizes sensitive data and prevents log injection
  */
 export function secureLog(level: 'info' | 'warn' | 'error', message: string, data?: any) {
+  const sanitizedMessage = sanitizeLogMessage(message);
+  
   const sanitizedData = data ? JSON.parse(JSON.stringify(data, (key, value) => {
     // Remove sensitive fields
     if (['password', 'token', 'secret', 'key', 'auth'].some(sensitive => 
@@ -172,10 +187,10 @@ export function secureLog(level: 'info' | 'warn' | 'error', message: string, dat
     }
     // Sanitize string values
     if (typeof value === 'string') {
-      return sanitizeHTML(value);
+      return sanitizeLogMessage(value);
     }
     return value;
   })) : undefined;
 
-  console[level](`[NEU-LIB] ${message}`, sanitizedData);
+  console[level](`[NEU-LIB] ${sanitizedMessage}`, sanitizedData);
 }
