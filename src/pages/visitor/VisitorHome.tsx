@@ -268,42 +268,28 @@ export default function VisitorHome() {
     try {
       const now = new Date().toISOString();
       
-      // CRITICAL: Double-check for any open session before inserting
-      // This prevents race conditions if user clicks multiple times
+      // SMART TOGGLE: Final check before insert
+      // If an open session exists, close it first, then create new one
       const { data: existingOpen } = await supabase
         .from('visit_logs')
-        .select('id')
+        .select('id, time_in')
         .eq('visitor_id', visitorId)
         .is('time_out', null)
         .maybeSingle();
 
       if (existingOpen) {
-        // Already has an open session - prevent duplicate
-        setErrMsg('You already have an active session. Please time out first.');
-        setPhase('error');
-        await signOut();
-        return;
+        // Close the existing session first
+        const dur = calcDurationMinutes(existingOpen.time_in, now);
+        await supabase
+          .from('visit_logs')
+          .update({ time_out: now, duration_minutes: dur })
+          .eq('id', existingOpen.id);
+        
+        // Small delay to ensure database consistency
+        await new Promise(resolve => setTimeout(resolve, 500));
       }
       
-      // CRITICAL: Check for duplicate Time In within last 60 seconds
-      const sixtySecondsAgo = new Date(Date.now() - 60000).toISOString();
-      const { data: recentLog } = await supabase
-        .from('visit_logs')
-        .select('id, time_in')
-        .eq('visitor_id', visitorId)
-        .gte('time_in', sixtySecondsAgo)
-        .maybeSingle();
-
-      if (recentLog) {
-        // Duplicate detected - show error
-        setErrMsg('You just timed in! Please wait before trying again.');
-        setPhase('error');
-        await signOut();
-        return;
-      }
-      
-      // CRITICAL: Insert new visit log ONLY when no active session exists
-      // This prevents duplicate "Inside" entries across all devices
+      // Now insert the new session
       const { error } = await supabase.from('visit_logs').insert({
         visitor_id: visitorId,
         purpose: pid,
@@ -311,7 +297,16 @@ export default function VisitorHome() {
         visit_date: now.split('T')[0],
       });
       
-      if (error) throw error;
+      if (error) {
+        // If still getting duplicate error, it means database constraint is active
+        if (error.message.includes('duplicate') || error.message.includes('unique')) {
+          setErrMsg('Please wait a moment and try again. Your previous session is being closed.');
+          setPhase('error');
+          await signOut();
+          return;
+        }
+        throw error;
+      }
 
       // Time string in PHT
       const timeStr = new Date().toLocaleTimeString('en-PH', {

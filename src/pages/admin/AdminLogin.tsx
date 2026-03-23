@@ -55,6 +55,7 @@ export default function AdminLogin() {
   const [error,       setError]       = useState('');
   const [showUnauth,  setShowUnauth]  = useState(false);
   const [unauthEmail, setUnauthEmail] = useState('');
+  const [checking,    setChecking]    = useState(false);
 
   // Check URL for Supabase errors on mount
   useEffect(() => {
@@ -76,12 +77,30 @@ export default function AdminLogin() {
   }, []);
 
   useEffect(() => {
-    if (loading || !profileReady) return;
-    if (!user) return;
+    if (loading || !profileReady) {
+      if (user) setChecking(true);
+      return;
+    }
+    if (!user) {
+      setChecking(false);
+      return;
+    }
+    
     const el = (user.email ?? '').toLowerCase().trim();
-    if (profile && ['admin','staff'].includes(profile.role) && checkIsAdmin(el)) {
-      navigate('/admin/dashboard', { replace: true });
-    } else if (!checkIsAdmin(el)) {
+    
+    // Check if user is admin
+    if (checkIsAdmin(el)) {
+      // If profile exists and has admin role, redirect immediately
+      if (profile && ['admin','staff'].includes(profile.role)) {
+        setChecking(false);
+        navigate('/admin/dashboard', { replace: true });
+      } else {
+        // Profile is being provisioned, keep checking state
+        setChecking(true);
+      }
+    } else {
+      // Not an admin - show unauthorized popup
+      setChecking(false);
       setUnauthEmail(user.email ?? '');
       setShowUnauth(true);
       signOut();
@@ -134,16 +153,22 @@ export default function AdminLogin() {
             </div>
 
             <div className="px-6 py-6">
+              {checking && (
+                <div className="mb-4 px-4 py-3 bg-blue-50 border border-blue-100 rounded-xl text-xs text-blue-600 font-semibold flex items-center gap-2">
+                  <Loader2 size={14} className="animate-spin" />
+                  Verifying admin access...
+                </div>
+              )}
               {error && (
                 <div className="mb-4 px-4 py-3 bg-red-50 border border-red-100 rounded-xl text-xs text-red-600 font-semibold">{error}</div>
               )}
               <p className="text-slate-500 text-sm text-center mb-5 leading-relaxed">
                 Sign in with your authorized NEU Google account to access the administrator dashboard.
               </p>
-              <button onClick={handleGoogle} disabled={gBusy}
+              <button onClick={handleGoogle} disabled={gBusy || checking}
                 className="w-full flex items-center justify-center gap-3 py-4 rounded-xl border-2 border-slate-200 bg-white hover:bg-slate-50 hover:border-blue-300 text-sm font-bold text-slate-700 transition-all disabled:opacity-60 shadow-sm">
-                {gBusy ? <Loader2 size={18} className="animate-spin text-blue-600" /> : <GoogleIcon />}
-                {gBusy ? 'Redirecting to Google…' : 'Continue with Google'}
+                {gBusy || checking ? <Loader2 size={18} className="animate-spin text-blue-600" /> : <GoogleIcon />}
+                {gBusy ? 'Redirecting to Google…' : checking ? 'Verifying access…' : 'Continue with Google'}
               </button>
               <p className="text-center text-[11px] text-slate-400 mt-4">
                 Only authorized <strong>@neu.edu.ph</strong> accounts are permitted

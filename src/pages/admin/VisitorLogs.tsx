@@ -144,7 +144,7 @@ export default function VisitorLogs() {
       <PageHeader title="Visitor Logs" subtitle="NEU Library" />
 
       {/* Time filter buttons */}
-      <div className="flex flex-wrap items-center gap-3 mb-4 animate-fade-up">
+      <div className="flex flex-wrap items-center gap-3 mb-4">
         <div className="flex bg-white rounded-xl border border-neu-border shadow-sm p-1 gap-0.5">
           {(['today','week','month','custom'] as TF[]).map(v => (
             <button key={v} onClick={() => { setTf(v); setPage(1); }}
@@ -165,7 +165,7 @@ export default function VisitorLogs() {
       </div>
 
       {/* ── Single toolbar row ── */}
-      <div className="flex items-center gap-3 mb-4 animate-fade-up" style={{ animationDelay: '0.1s' }}>
+      <div className="flex items-center gap-3 mb-4">
         {/* Search — takes up available space */}
         <div className="flex-1 max-w-xl">
           <SearchBar
@@ -220,7 +220,7 @@ export default function VisitorLogs() {
 
       {/* ── Expandable filter panel ── */}
       {showFilters && (
-        <div className="grid grid-cols-2 gap-3 mb-4 p-4 rounded-2xl bg-white border border-slate-200 shadow-sm animate-fade-up" style={{ animationDelay: '0.15s' }}>
+        <div className="grid grid-cols-2 gap-3 mb-4 p-4 rounded-2xl bg-white border border-slate-200 shadow-sm">
           <div>
             <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1.5">
               Type
@@ -252,7 +252,7 @@ export default function VisitorLogs() {
       )}
 
       {/* ── Table ── */}
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden animate-fade-up" style={{ animationDelay: '0.2s' }}>
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 bg-slate-50/60">
           <div className="flex items-center gap-2.5">
             <ClipboardList size={15} className="text-slate-400" />

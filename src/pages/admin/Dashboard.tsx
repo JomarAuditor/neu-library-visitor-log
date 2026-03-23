@@ -132,7 +132,7 @@ export default function Dashboard() {
       <PageHeader title="Visitor Dashboard" subtitle="NEU Library Management" />
 
       {/* Time filter + actions */}
-      <div className="flex flex-wrap items-center gap-3 mb-5 animate-fade-up">
+      <div className="flex flex-wrap items-center gap-3 mb-5">
         <div className="flex bg-white rounded-xl border border-neu-border shadow-card p-1 gap-0.5">
           {(['today','week','month','custom'] as TF[]).map(v => (
             <button key={v} onClick={() => setTf(v)}
@@ -164,7 +164,7 @@ export default function Dashboard() {
       </div>
 
       {/* Filters */}
-      <div className="card-p mb-5 animate-fade-up" style={{ animationDelay: '0.1s' }}>
+      <div className="card-p mb-5">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
             <Filter size={14} className="text-neu-blue" />
@@ -272,7 +272,7 @@ export default function Dashboard() {
 
       {/* Purpose breakdown — clickable filter shortcuts */}
       {!isLoading && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6 animate-fade-up" style={{ animationDelay: '0.15s' }}>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
           {breakdown.map(({ p, count, Icon }) => (
             <div key={p} onClick={() => setPFilter(pFilter === p ? '' : p)}
               className={`card-p text-center cursor-pointer transition-all hover:shadow-card-md select-none ${
@@ -289,7 +289,7 @@ export default function Dashboard() {
       )}
 
       {/* Charts */}
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 animate-fade-up" style={{ animationDelay: '0.2s' }}>
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
         <CollegeChart timeFilter={tf} from={from} to={to} />
         <CourseChart  timeFilter={tf} from={from} to={to} />
       </div>
