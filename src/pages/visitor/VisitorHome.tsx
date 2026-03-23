@@ -209,8 +209,7 @@ export default function VisitorHome() {
       setVisitorId(visitor.id);
       setFirstName(visitor.full_name.split(' ')[0]);
 
-      // Step 2: CRITICAL - Check for ANY open session (time_out IS NULL)
-      // This prevents multiple active sessions across ALL devices
+      // Step 2: SMART TOGGLE - Check for open session and handle it
       const { data: openLog, error: logError } = await supabase
         .from('visit_logs')
         .select('id, time_in, purpose')
@@ -224,38 +223,11 @@ export default function VisitorHome() {
 
       if (openLog) {
         // User has an active session - TIME OUT automatically
-        // This ensures only ONE active session per user across all devices
         await doTimeOut(openLog.id, openLog.time_in, visitor.full_name.split(' ')[0]);
-        return; // Exit after time out
+        return;
       }
       
-      // No active session - continue to check cooldown and allow Time In
-      // No active session - continue to check cooldown and allow Time In
-      // ADDITIONAL CHECK: Prevent rapid Time In within 60 seconds of last Time Out
-      const { data: recentCompleted } = await supabase
-        .from('visit_logs')
-        .select('time_out')
-        .eq('visitor_id', visitor.id)
-        .not('time_out', 'is', null)
-        .order('time_out', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      if (recentCompleted?.time_out) {
-        const lastTimeOut = new Date(recentCompleted.time_out).getTime();
-        const now = Date.now();
-        const secondsSinceLastVisit = (now - lastTimeOut) / 1000;
-
-        if (secondsSinceLastVisit < 60) {
-          // Too soon after last Time Out
-          setErrMsg(`Please wait ${Math.ceil(60 - secondsSinceLastVisit)} seconds before timing in again.`);
-          setPhase('error');
-          await signOut();
-          return;
-        }
-      }
-
-      // No active session - TIME IN (select purpose first)
+      // No active session - Allow TIME IN immediately
       setPhase('select-purpose');
     } catch (e: unknown) {
       setErrMsg((e as Error)?.message ?? 'Something went wrong. Please try again.');
@@ -268,8 +240,7 @@ export default function VisitorHome() {
     try {
       const now = new Date().toISOString();
       
-      // SMART TOGGLE: Final check before insert
-      // If an open session exists, close it first, then create new one
+      // SMART TOGGLE: Check and close any existing session in one go
       const { data: existingOpen } = await supabase
         .from('visit_logs')
         .select('id, time_in')
@@ -278,18 +249,15 @@ export default function VisitorHome() {
         .maybeSingle();
 
       if (existingOpen) {
-        // Close the existing session first
+        // Close existing session immediately
         const dur = calcDurationMinutes(existingOpen.time_in, now);
         await supabase
           .from('visit_logs')
           .update({ time_out: now, duration_minutes: dur })
           .eq('id', existingOpen.id);
-        
-        // Small delay to ensure database consistency
-        await new Promise(resolve => setTimeout(resolve, 500));
       }
       
-      // Now insert the new session
+      // Insert new session immediately (no delay)
       const { error } = await supabase.from('visit_logs').insert({
         visitor_id: visitorId,
         purpose: pid,
@@ -298,13 +266,7 @@ export default function VisitorHome() {
       });
       
       if (error) {
-        // If still getting duplicate error, it means database constraint is active
-        if (error.message.includes('duplicate') || error.message.includes('unique')) {
-          setErrMsg('Please wait a moment and try again. Your previous session is being closed.');
-          setPhase('error');
-          await signOut();
-          return;
-        }
+        console.error('Time in error:', error);
         throw error;
       }
 
