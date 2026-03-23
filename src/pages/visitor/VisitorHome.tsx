@@ -151,7 +151,10 @@ export default function VisitorHome() {
       if (phase !== 'error') setPhase('idle');
       return;
     }
-    runToggle();
+    // Only run toggle if we're in idle or checking phase
+    if (phase === 'idle' || phase === 'checking') {
+      runToggle();
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, authLoading, activePopup]);
 
@@ -160,7 +163,15 @@ export default function VisitorHome() {
   // No race conditions, no duplicates, perfect toggle
   const runToggle = async () => {
     if (!user?.email) return;
+    
+    // Prevent multiple simultaneous calls
+    if (phase === 'checking' || phase === 'working') {
+      console.log('[DEBUG] Already processing, skipping');
+      return;
+    }
+    
     setPhase('checking');
+    console.log('[DEBUG] Starting runToggle for:', user.email);
 
     try {
       const email = user.email.toLowerCase().trim();
