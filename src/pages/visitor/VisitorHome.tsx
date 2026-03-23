@@ -217,24 +217,25 @@ export default function VisitorHome() {
       if (sessErr) throw sessErr;
 
       // DEBUG: Log EVERYTHING
-      console.log('[DEBUG] openSessions:', openSessions);
-      console.log('[DEBUG] openSessions type:', typeof openSessions);
-      console.log('[DEBUG] openSessions is array?', Array.isArray(openSessions));
-      console.log('[DEBUG] openSessions length:', openSessions?.length);
-      console.log('[DEBUG] Condition check:', openSessions && openSessions.length > 0);
+      console.log('[DEBUG] Query result - openSessions:', openSessions);
+      console.log('[DEBUG] Query result - length:', openSessions?.length || 0);
+      
+      // Check immediately after query, don't wait
+      const hasOpenSessions = openSessions && Array.isArray(openSessions) && openSessions.length > 0;
+      console.log('[DEBUG] hasOpenSessions:', hasOpenSessions);
 
       // ═══════════════════════════════════════════════════════════
       // BRANCH A: USER IS INSIDE → TIME OUT
       // ═══════════════════════════════════════════════════════════
-      if (openSessions && openSessions.length > 0) {
-        console.log('[DEBUG] BRANCH A: Timing out', openSessions.length, 'session(s)');
+      if (hasOpenSessions) {
+        console.log('[DEBUG] BRANCH A: Timing out', openSessions!.length, 'session(s)');
         const now = new Date().toISOString();
         const timeStr = new Date().toLocaleTimeString('en-PH', { 
           hour: '2-digit', minute: '2-digit', hour12: true 
         });
 
         // Close ALL open sessions (handles corruption gracefully)
-        const updatePromises = openSessions.map(session => {
+        const updatePromises = openSessions!.map(session => {
           const dur = calcDurationMinutes(session.time_in, now);
           return supabase
             .from('visit_logs')
