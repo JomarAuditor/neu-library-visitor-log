@@ -211,7 +211,10 @@ export function useCurrentlyInsideRealtime(onUpdate?: (count: number) => void) {
     },
     onUpdate: (payload) => {
       // Check if time_out was set (someone left)
-      if (payload.new?.time_out && !payload.old?.time_out) {
+      const newRecord = payload.new as any;
+      const oldRecord = payload.old as any;
+      
+      if (newRecord?.time_out && !oldRecord?.time_out) {
         qc.invalidateQueries({ queryKey: ['currently-inside'] });
         if (onUpdate) {
           const currentCount = qc.getQueryData<number>(['currently-inside']) || 0;

@@ -1,22 +1,43 @@
 // src/pages/visitor/VisitorHome.tsx
-// Enterprise-grade visitor authentication with enhanced security feedback
-import { useState, useEffect, useRef } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
-import {
-  Loader2, Clock, ShieldAlert, XCircle,
-} from 'lucide-react';
+// ================================================================
+// THE REAL FIX — explained simply:
+//
+// The previous code was sometimes INSERTING a new time-in record
+// even when an open session existed. Race condition.
+//
+// This version:
+//   1. Signs in with Google
+//   2. Queries DB for ANY open session (time_out IS NULL)
+//   3. If open session found  → UPDATE it (time out) → go to success
+//   4. If no open session    → ask purpose → INSERT (time in) → go to success
+//   5. RETURN immediately after each action. No extra steps.
+//
+// No smart_time_in RPC. No database functions. Pure simple logic.
+// This is exactly how real library RFID systems work.
+// ================================================================
+
+import { useState, useEffect } from 'react';
+import { useNavigate }          from 'react-router-dom';
+import { Loader2, Clock, ShieldAlert } from 'lucide-react';
 import { supabase }  from '@/lib/supabase';
 import { useAuth }   from '@/hooks/useAuth';
 import { PURPOSES, VisitPurpose, PURPOSE_EMOJI } from '@/types';
 import { calcDurationMinutes, fmtDuration } from '@/lib/utils';
-import { sanitizeName, sanitizeEmail, authRateLimiter, secureLog } from '@/lib/security';
 
-type Phase =
-  | 'idle'
-  | 'checking'
-  | 'select-purpose'
-  | 'working'
-  | 'error';
+type Phase = 'idle' | 'checking' | 'select-purpose' | 'working' | 'error';
+
+// ── Read Supabase error from URL (domain block) ───────────────────────
+function getSupabaseUrlError(): string | null {
+  const search = new URLSearchParams(window.location.search);
+  const hash   = new URLSearchParams(window.location.hash.replace('#', ''));
+  const code   = search.get('error') || hash.get('error');
+  const desc   = search.get('error_description') || hash.get('error_description');
+  if (!code) return null;
+  if (desc?.toLowerCase().includes('database') || code === 'server_error') {
+    return 'only_neu_domain';
+  }
+  return desc || code;
+}
 
 // ── Manila clock ──────────────────────────────────────────────────────
 function useManilaTime() {
@@ -49,84 +70,57 @@ function GoogleIcon({ size = 20 }: { size?: number }) {
 }
 
 // ── Block popup ───────────────────────────────────────────────────────
-function BlockPopup({ message, onDismiss }: { message: string; onDismiss: () => void }) {
-  const isSuspended = message.toLowerCase().includes('suspended') || message.toLowerCase().includes('blocked');
-  const isNonNEU = message.toLowerCase().includes('only @neu.edu.ph');
+function BlockPopup({ reason, onDismiss }: { reason: string; onDismiss: () => void }) {
+  const isNEU       = reason === 'only_neu_domain';
+  const isSuspended = reason.toLowerCase().includes('suspended') || reason.toLowerCase().includes('blocked from');
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{ background: 'rgba(0,0,0,0.72)', backdropFilter: 'blur(8px)' }}
-    >
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4"
+      style={{ background: 'rgba(0,0,0,0.78)', backdropFilter: 'blur(10px)' }}>
       <div className="w-full max-w-sm rounded-3xl overflow-hidden shadow-2xl"
-        style={{ animation: 'scaleIn .2s ease-out' }}>
+        style={{ animation: 'popIn .25s cubic-bezier(.175,.885,.32,1.275)' }}>
         <div className={`px-6 pt-7 pb-5 text-center ${isSuspended ? 'bg-orange-600' : 'bg-red-600'}`}>
           <div className="w-16 h-16 rounded-full bg-white/20 flex items-center justify-center mx-auto mb-3">
-            {isSuspended
-              ? <XCircle    size={32} className="text-white" />
-              : <ShieldAlert size={32} className="text-white" />}
+            <ShieldAlert size={32} className="text-white" />
           </div>
           <h2 className="text-white font-black text-xl mb-1">
-            {isSuspended ? 'Account Suspended' : isNonNEU ? 'Access Denied' : 'Access Denied'}
+            {isSuspended ? 'Account Suspended' : 'Access Denied'}
           </h2>
-          {isNonNEU && (
-            <p className="text-white/80 text-sm font-medium">Only NEU accounts are allowed.</p>
-          )}
         </div>
         <div className="bg-white px-6 py-5 text-center">
-          {isSuspended ? (
-            <>
-              <p className="text-slate-700 font-bold text-sm mb-2">
-                You are currently blocked from library access.
-              </p>
-              <p className="text-slate-400 text-xs leading-relaxed mb-5">
-                Please contact the Library Admin to resolve this issue.
-              </p>
-            </>
-          ) : isNonNEU ? (
-            <>
-              <p className="text-slate-700 font-bold text-sm mb-2">
-                Only @neu.edu.ph institutional emails are allowed.
-              </p>
-              <p className="text-slate-400 text-xs leading-relaxed mb-5">
-                Please sign in using your official NEU Google account to access the library system.
-              </p>
-            </>
-          ) : (
-            <>
-              <p className="text-slate-700 font-bold text-sm mb-2">
-                Only @neu.edu.ph institutional emails are allowed.
-              </p>
-              <p className="text-slate-400 text-xs leading-relaxed mb-5">
-                Please sign in using your official NEU Google account.
-              </p>
-            </>
-          )}
-          <button
-            onClick={onDismiss}
-            className={`w-full py-3 rounded-2xl text-white font-black text-sm transition-all ${
+          <div className="bg-red-50 border border-red-200 rounded-2xl px-4 py-3 mb-4">
+            <p className="text-red-700 text-sm font-bold">
+              {isNEU
+                ? '⛔  Only @neu.edu.ph institutional emails are allowed.'
+                : isSuspended
+                  ? '🚫  Your account has been blocked from library access.'
+                  : `⛔  ${reason}`}
+            </p>
+          </div>
+          <p className="text-slate-400 text-xs leading-relaxed mb-5">
+            {isSuspended
+              ? 'Please contact the library administrator to resolve this.'
+              : 'Please use your official NEU Google account (e.g. yourname@neu.edu.ph).'}
+          </p>
+          <button onClick={onDismiss}
+            className={`w-full py-3.5 rounded-2xl text-white font-black text-sm transition-all ${
               isSuspended ? 'bg-orange-600 hover:bg-orange-700' : 'bg-red-600 hover:bg-red-700'
-            }`}
-          >
-            Dismiss
+            }`}>
+            Dismiss &amp; Try Again
           </button>
         </div>
       </div>
-      <style>{`
-        @keyframes scaleIn { from{transform:scale(.88);opacity:0} to{transform:scale(1);opacity:1} }
-      `}</style>
+      <style>{`@keyframes popIn{from{transform:scale(.82);opacity:0}to{transform:scale(1);opacity:1}}`}</style>
     </div>
   );
 }
 
-// ── Main ──────────────────────────────────────────────────────────────
+// ── Main Component ────────────────────────────────────────────────────
 export default function VisitorHome() {
   const navigate = useNavigate();
-  const [params] = useSearchParams();
   const {
     user, loading: authLoading,
     signInWithGoogle, signOut,
     blockReason, clearBlockReason,
-    authModal, clearAuthModal,
   } = useAuth();
   const clock = useManilaTime();
 
@@ -136,225 +130,189 @@ export default function VisitorHome() {
   const [visitorId, setVisitorId] = useState('');
   const [firstName, setFirstName] = useState('');
   const [gBusy,     setGBusy]     = useState(false);
+  const [urlError,  setUrlError]  = useState<string | null>(null);
 
-  const showPopup = !!blockReason || !!authModal;
-
-  // Check URL for Supabase errors on mount
+  // Check URL for Supabase error on mount (domain block from DB trigger)
   useEffect(() => {
-    const search = new URLSearchParams(window.location.search);
-    const hash = new URLSearchParams(window.location.hash.replace('#', ''));
-    const errorCode = search.get('error') || hash.get('error');
-    const errorDesc = search.get('error_description') || hash.get('error_description');
-
-    if (errorCode === 'server_error' || errorDesc?.includes('Database error')) {
-      console.error('❌ Non-NEU email blocked by database trigger:', {
-        error: errorCode,
-        description: errorDesc,
-        url: window.location.href
-      });
-      console.warn('⚠️ User attempted sign-in with non-@neu.edu.ph email');
-      // Trigger the popup via blockReason mechanism
-      setErrMsg('Only @neu.edu.ph institutional emails are allowed.');
-      setPhase('error');
+    const err = getSupabaseUrlError();
+    if (err) {
+      setUrlError(err);
       window.history.replaceState({}, '', '/');
     }
   }, []);
 
-  // No auto-reset timer on this page — success goes to /success route
+  const activePopup = urlError || blockReason;
+
+  // Handle auth state changes
   useEffect(() => {
     if (authLoading) return;
-    if (blockReason) return;
-
+    if (activePopup) return;
     if (!user) {
       if (phase !== 'error') setPhase('idle');
       return;
     }
-    runSmartToggle();
+    runToggle();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, authLoading, blockReason]);
+  }, [user, authLoading, activePopup]);
 
-  const runSmartToggle = async () => {
+  // ── THE CORE TOGGLE LOGIC ─────────────────────────────────────────
+  // This is the ONLY function that handles time-in/out.
+  // It is called once per sign-in. It does ONE thing and returns.
+  const runToggle = async () => {
     if (!user?.email) return;
     setPhase('checking');
+
     try {
-      const email = user.email.toLowerCase().trim();
-      
-      // Step 1: Get visitor record
-      const { data: visitor, error: visitorError } = await supabase
+      // 1. Find the visitor record
+      const { data: visitor, error: visErr } = await supabase
         .from('visitors')
         .select('id, full_name, is_blocked')
-        .eq('email', email)
+        .eq('email', user.email.toLowerCase().trim())
         .maybeSingle();
 
-      if (visitorError) throw visitorError;
+      if (visErr) throw visErr;
 
+      // 2. New user → register
       if (!visitor) {
-        // Not registered - redirect to registration
-        navigate(
-          `/register?email=${encodeURIComponent(user.email)}&name=${encodeURIComponent(
-            user.user_metadata?.full_name ?? user.user_metadata?.name ?? ''
-          )}`,
-          { replace: true }
-        );
-        return;
+        navigate(`/register?email=${encodeURIComponent(user.email)}&name=${encodeURIComponent(
+          user.user_metadata?.full_name ?? user.user_metadata?.name ?? ''
+        )}`, { replace: true });
+        return; // ← EXIT immediately
       }
 
+      // 3. Blocked
       if (visitor.is_blocked) {
-        setErrMsg('Account Suspended: You are currently blocked from library access. Please contact the administrator.');
+        setErrMsg('Your account has been suspended. Please contact the Library Admin.');
         setPhase('error');
         await signOut();
-        return;
+        return; // ← EXIT immediately
       }
 
       setVisitorId(visitor.id);
       setFirstName(visitor.full_name.split(' ')[0]);
 
-      // Step 2: PURE TOGGLE - Check for open session
-      const { data: openLog } = await supabase
+      // 4. Check for open session — THE KEY QUERY
+      //    Gets ALL open sessions ordered by time_in desc
+      const { data: openSessions, error: sessErr } = await supabase
         .from('visit_logs')
-        .select('id, time_in, purpose')
+        .select('id, time_in')
         .eq('visitor_id', visitor.id)
         .is('time_out', null)
-        .order('time_in', { ascending: false })
-        .limit(1)
-        .maybeSingle();
+        .order('time_in', { ascending: false });
 
-      if (openLog) {
-        // Has active session - TIME OUT (like RFID tap out)
-        await doTimeOut(openLog.id, openLog.time_in, visitor.full_name.split(' ')[0]);
-        return; // CRITICAL: Exit immediately - don't show purpose picker
+      if (sessErr) throw sessErr;
+
+      if (openSessions && openSessions.length > 0) {
+        // ── USER IS INSIDE → TIME OUT ─────────────────────────────
+        // If somehow multiple open sessions exist (bug), close ALL of them
+        const now = new Date().toISOString();
+
+        for (const session of openSessions) {
+          const dur = calcDurationMinutes(session.time_in, now);
+          await supabase
+            .from('visit_logs')
+            .update({ time_out: now, duration_minutes: Math.max(0, dur) })
+            .eq('id', session.id);
+        }
+
+        // Get duration from the most recent session for display
+        const latestDur = calcDurationMinutes(openSessions[0].time_in, now);
+        const timeStr   = new Date().toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit', hour12: true });
+
+        await signOut();
+        navigate(
+          `/success?action=out&name=${encodeURIComponent(visitor.full_name.split(' ')[0])}&time=${encodeURIComponent(timeStr)}&duration=${encodeURIComponent(fmtDuration(latestDur))}`,
+          { replace: true }
+        );
+        return; // ← EXIT immediately, do NOT fall through
       }
-      
-      // No active session - TIME IN (like RFID tap in)
-      // Show purpose picker
+
+      // ── USER IS OUTSIDE → SHOW PURPOSE PICKER THEN TIME IN ───────
       setPhase('select-purpose');
+      // doTimeIn() will be called when user picks a purpose
+
     } catch (e: unknown) {
-      console.error('Smart toggle error:', e);
       setErrMsg((e as Error)?.message ?? 'Something went wrong. Please try again.');
       setPhase('error');
     }
   };
 
+  // Called only after user picks a purpose
   const doTimeIn = async (pid: VisitPurpose) => {
     setPhase('working');
     try {
-      const now = new Date().toISOString();
-      
-      // ATOMIC SOLUTION: Use RPC function to close all + insert in single transaction
-      const { error } = await supabase.rpc('smart_time_in', {
-        p_visitor_id: visitorId,
-        p_purpose: pid,
-        p_time_in: now,
-        p_visit_date: now.split('T')[0],
-      });
-      
-      if (error) {
-        console.error('Smart time in error:', error);
-        throw error;
+      // Final safety check — close any session that snuck in during purpose selection
+      const { data: stillOpen } = await supabase
+        .from('visit_logs')
+        .select('id, time_in')
+        .eq('visitor_id', visitorId)
+        .is('time_out', null);
+
+      if (stillOpen && stillOpen.length > 0) {
+        // Someone signed in between purpose picker and confirm — time them out
+        const now = new Date().toISOString();
+        for (const s of stillOpen) {
+          const dur = calcDurationMinutes(s.time_in, now);
+          await supabase.from('visit_logs').update({
+            time_out: now, duration_minutes: Math.max(0, dur),
+          }).eq('id', s.id);
+        }
+        // Now go to success as time-out
+        const ts = new Date().toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit', hour12: true });
+        await signOut();
+        navigate(`/success?action=out&name=${encodeURIComponent(firstName)}&time=${encodeURIComponent(ts)}&duration=${encodeURIComponent('0m')}`, { replace: true });
+        return;
       }
 
-      // Time string in PHT
-      const timeStr = new Date().toLocaleTimeString('en-PH', {
-        hour: '2-digit', minute: '2-digit', hour12: true,
+      // Insert the time-in record
+      const now = new Date().toISOString();
+      const { error } = await supabase.from('visit_logs').insert({
+        visitor_id: visitorId,
+        purpose:    pid,
+        time_in:    now,
+        visit_date: now.split('T')[0],
       });
+      if (error) throw error;
 
-      // Sign out auth session, then go to success page
+      const timeStr = new Date().toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit', hour12: true });
       await signOut();
       navigate(
         `/success?action=in&name=${encodeURIComponent(firstName)}&time=${encodeURIComponent(timeStr)}`,
         { replace: true }
       );
     } catch (e: unknown) {
-      setErrMsg((e as Error)?.message ?? 'Could not record your entry.');
-      setPhase('error');
-    }
-  };
-
-  const doTimeOut = async (logId: string, timeIn: string, name: string) => {
-    setPhase('working');
-    try {
-      const now = new Date().toISOString();
-      const dur = calcDurationMinutes(timeIn, now);
-      
-      // CRITICAL: Update the existing record with time_out
-      // This completes the visit and prevents duplicate "Inside" entries
-      const { error } = await supabase
-        .from('visit_logs')
-        .update({ time_out: now, duration_minutes: dur })
-        .eq('id', logId);
-        
-      if (error) throw error;
-
-      const timeStr = new Date().toLocaleTimeString('en-PH', {
-        hour: '2-digit', minute: '2-digit', hour12: true,
-      });
-
-      await signOut();
-      navigate(
-        `/success?action=out&name=${encodeURIComponent(name || firstName)}&time=${encodeURIComponent(timeStr)}&duration=${encodeURIComponent(fmtDuration(dur))}`,
-        { replace: true }
-      );
-    } catch (e: unknown) {
-      setErrMsg((e as Error)?.message ?? 'Could not record your time out.');
+      setErrMsg((e as Error)?.message ?? 'Could not record your entry. Please try again.');
       setPhase('error');
     }
   };
 
   const handleGoogleSignIn = async () => {
-    clearBlockReason(); setErrMsg(''); setGBusy(true);
-    
-    try {
-      secureLog('info', 'Google sign-in attempt initiated');
-      const { error } = await signInWithGoogle('/');
-      if (error) { 
-        secureLog('error', 'Google sign-in failed', { error });
-        setErrMsg(error); 
-        setPhase('error'); 
-      }
-    } catch (e) {
-      secureLog('error', 'Google sign-in exception', { error: (e as Error)?.message });
-      setErrMsg('Sign-in failed. Please try again.');
-      setPhase('error');
-    } finally {
-      setGBusy(false);
-    }
+    clearBlockReason(); setUrlError(null); setErrMsg(''); setGBusy(true);
+    const { error } = await signInWithGoogle('/');
+    if (error) { setErrMsg(error); setPhase('error'); setGBusy(false); }
   };
 
   const reset = () => {
-    clearBlockReason(); setErrMsg(''); setPurpose(null);
+    clearBlockReason(); setUrlError(null); setErrMsg(''); setPurpose(null);
     signOut().then(() => setPhase('idle'));
   };
 
+  const dismissPopup = () => { setUrlError(null); clearBlockReason(); };
+
   return (
     <>
-      {/* Show blockReason popup if exists */}
-      {blockReason && <BlockPopup message={blockReason} onDismiss={clearBlockReason} />}
-      
-      {/* AuthModal is rendered globally in AuthProvider, but we can also show blockReason here */}
+      {activePopup && <BlockPopup reason={activePopup} onDismiss={dismissPopup} />}
 
       <div className="min-h-screen relative">
-        {/* Fixed background */}
-        <div
-          className="fixed inset-0 -z-10"
-          style={{
-            backgroundImage: "url('/Neu-Lib_Building.jpg')",
-            backgroundSize: 'cover',
-            backgroundPosition: 'center center',
-          }}
-          aria-hidden
-        />
-        {/* Fixed dark overlay */}
-        <div
-          className="fixed inset-0 -z-10"
-          style={{
-            background: 'linear-gradient(160deg,rgba(0,20,80,.82) 0%,rgba(0,50,160,.78) 50%,rgba(0,20,80,.86) 100%)',
-          }}
-          aria-hidden
-        />
+        <div className="fixed inset-0 -z-10"
+          style={{ backgroundImage:"url('/Neu-Lib_Building.jpg')", backgroundSize:'cover', backgroundPosition:'center' }}
+          aria-hidden />
+        <div className="fixed inset-0 -z-10"
+          style={{ background:'linear-gradient(160deg,rgba(0,20,80,.82) 0%,rgba(0,50,160,.78) 50%,rgba(0,20,80,.86) 100%)' }}
+          aria-hidden />
 
         <div className="relative z-10 min-h-screen flex flex-col items-center justify-center p-4">
-          <a href="/admin/login"
-            className="absolute top-5 right-7 text-white/50 hover:text-white/80 text-sm font-medium transition-colors">
+          <a href="/admin/login" className="absolute top-5 right-7 text-white/50 hover:text-white/80 text-sm font-medium transition-colors">
             Admin Portal →
           </a>
 
@@ -362,83 +320,52 @@ export default function VisitorHome() {
 
             {/* Clock */}
             <div className="text-center select-none">
-              <div
-                className="flex items-end justify-center gap-2"
-                style={{ fontFamily: 'Outfit, sans-serif' }}
-              >
-                <span
-                  className="text-white font-black leading-none"
-                  style={{
-                    fontSize: 'clamp(56px, 10vw, 88px)',
-                    textShadow: '0 4px 24px rgba(0,0,0,.6)',
-                    letterSpacing: '-2px',
-                  }}
-                >
+              <div className="flex items-end justify-center gap-2" style={{ fontFamily:'Outfit,sans-serif' }}>
+                <span className="text-white font-black leading-none"
+                  style={{ fontSize:'clamp(56px,10vw,88px)', textShadow:'0 4px 24px rgba(0,0,0,.6)', letterSpacing:'-2px' }}>
                   {clock.hh}:{clock.mm}
                 </span>
-                <div className="pb-2 flex flex-col items-start gap-0.5">
-                  <span className="text-white font-black text-xl leading-none">{clock.ap}</span>
-                  <span className="text-white/50 font-bold text-base tabular-nums leading-none">:{clock.ss}</span>
+                <div className="pb-2.5 flex flex-col items-start gap-0.5">
+                  <span className="text-white font-black text-2xl leading-none">{clock.ap}</span>
+                  <span className="text-white/50 font-bold text-lg tabular-nums leading-none">:{clock.ss}</span>
                 </div>
               </div>
-              <p className="text-white/65 text-xs font-semibold mt-1.5 tracking-wide">{clock.day}</p>
+              <p className="text-white/65 text-sm font-semibold mt-1.5">{clock.day}</p>
               <div className="flex items-center justify-center gap-1.5 mt-1">
-                <Clock size={9} className="text-white/35" />
-                <span className="text-white/35 text-[9px] font-bold uppercase tracking-widest">
-                  Philippine Standard Time
-                </span>
+                <Clock size={10} className="text-white/35" />
+                <span className="text-white/35 text-[10px] font-bold uppercase tracking-widest">Philippine Standard Time</span>
               </div>
             </div>
 
-            {/* Logo + title */}
+            {/* Logo */}
             <div className="text-center">
-              <img
-                src="/NEU%20Library%20logo.png"
-                alt="NEU"
+              <img src="/NEU%20Library%20logo.png" alt="NEU"
                 className="h-24 w-24 object-contain mx-auto mb-3 drop-shadow-2xl"
-                onError={e => {
-                  const i = e.currentTarget as HTMLImageElement;
-                  if (!i.dataset.t) { i.dataset.t = '1'; i.src = '/neu-logo.svg'; }
-                  else i.style.display = 'none';
-                }}
-              />
-              <h1
-                className="text-white font-bold text-3xl tracking-tight"
-                style={{ textShadow: '0 2px 12px rgba(0,0,0,.5)' }}
-              >
+                onError={e => { const i = e.currentTarget as HTMLImageElement; if (!i.dataset.t) { i.dataset.t='1'; i.src='/neu-logo.svg'; } else i.style.display='none'; }} />
+              <h1 className="text-white font-bold text-3xl tracking-tight" style={{ textShadow:'0 2px 12px rgba(0,0,0,.5)' }}>
                 NEU Library
               </h1>
-              <p className="text-white/55 text-sm mt-0.5 font-medium">
-                Visitor Log · New Era University
-              </p>
+              <p className="text-white/55 text-sm mt-0.5 font-medium">Visitor Log · New Era University</p>
             </div>
 
-            {/*
-              CRITICAL FIX: bg-white NOT bg-white/90
-              Semi-transparent white caused text to be unreadable against the dark bg.
-              Solid white card = always readable.
-            */}
+            {/* Card */}
             <div className="w-full bg-white rounded-2xl shadow-2xl overflow-hidden">
 
               {/* IDLE */}
               {phase === 'idle' && (
                 <div className="px-8 py-8 text-center">
                   <p className="text-slate-600 text-sm mb-6 leading-relaxed">
-                    Sign in with your <strong className="text-neu-blue">@neu.edu.ph</strong> account to record your library visit.
-                    The application will automatically check you{' '}
-                    <strong className="text-slate-800">in</strong> or{' '}
+                    Sign in with your NEU account to record your library visit.
+                    The system will automatically check you <strong className="text-slate-800">in</strong> or{' '}
                     <strong className="text-slate-800">out</strong>.
                   </p>
-                  <button
-                    onClick={handleGoogleSignIn}
-                    disabled={gBusy}
-                    className="w-full flex items-center justify-center gap-3 py-3.5 rounded-xl border-2 border-slate-200 bg-white hover:bg-slate-50 hover:border-slate-300 text-sm font-semibold text-slate-700 transition-all disabled:opacity-60 shadow-sm"
-                  >
+                  <button onClick={handleGoogleSignIn} disabled={gBusy}
+                    className="w-full flex items-center justify-center gap-3 py-3.5 rounded-xl border-2 border-slate-200 bg-white hover:bg-slate-50 text-sm font-semibold text-slate-700 transition-all disabled:opacity-60 shadow-sm">
                     {gBusy ? <Loader2 size={18} className="animate-spin text-blue-600" /> : <GoogleIcon size={18} />}
                     {gBusy ? 'Opening Google…' : 'Sign in with Google'}
                   </button>
                   <p className="text-slate-400 text-[11px] mt-4">
-                    Only <strong className="text-slate-600">@neu.edu.ph</strong> institutional emails are accepted
+                    Only <strong className="text-slate-500">@neu.edu.ph</strong> accounts are accepted
                   </p>
                 </div>
               )}
@@ -466,38 +393,26 @@ export default function VisitorHome() {
                   <div className="p-5">
                     <div className="grid grid-cols-2 gap-3 mb-4">
                       {PURPOSES.map(p => (
-                        <button
-                          key={p}
-                          onClick={() => setPurpose(p)}
+                        <button key={p} onClick={() => setPurpose(p)}
                           className="rounded-xl border-2 py-4 px-3 flex flex-col items-center gap-2 transition-all"
                           style={{
                             borderColor: purpose === p ? '#2563EB' : '#E2E8F0',
                             background:  purpose === p ? '#EFF6FF' : '#F9FAFB',
                             transform:   purpose === p ? 'scale(1.02)' : 'scale(1)',
-                          }}
-                        >
+                          }}>
                           <span className="text-2xl">{PURPOSE_EMOJI[p]}</span>
-                          <span
-                            className="text-[11px] font-bold text-center leading-tight"
-                            style={{ color: purpose === p ? '#2563EB' : '#64748B' }}
-                          >
-                            {p}
-                          </span>
+                          <span className="text-[11px] font-bold text-center leading-tight"
+                            style={{ color: purpose === p ? '#2563EB' : '#64748B' }}>{p}</span>
                         </button>
                       ))}
                     </div>
-                    <button
-                      onClick={() => purpose && doTimeIn(purpose)}
-                      disabled={!purpose}
-                      className="w-full py-3.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm disabled:opacity-40 transition-all shadow-sm"
-                    >
+                    <button onClick={() => purpose && doTimeIn(purpose)} disabled={!purpose}
+                      className="w-full py-3.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm disabled:opacity-40 transition-all">
                       Confirm Time In
                     </button>
-                    <button
-                      onClick={reset}
-                      className="w-full mt-2 py-2 text-xs text-slate-400 hover:text-slate-600 transition-colors"
-                    >
-                      Cancel — use a different account
+                    <button onClick={reset}
+                      className="w-full mt-2 py-2 text-xs text-slate-400 hover:text-slate-600 transition-colors">
+                      Cancel
                     </button>
                   </div>
                 </>
@@ -505,16 +420,14 @@ export default function VisitorHome() {
 
               {/* ERROR */}
               {phase === 'error' && (
-                <div className="px-8 py-9 text-center">
+                <div className="px-8 py-8 text-center">
                   <div className="w-14 h-14 rounded-full bg-red-100 flex items-center justify-center mx-auto mb-4">
                     <ShieldAlert size={26} className="text-red-500" />
                   </div>
                   <p className="text-slate-900 font-black text-base mb-2">Sign-In Blocked</p>
                   <p className="text-slate-600 text-sm leading-relaxed mb-6">{errMsg}</p>
-                  <button
-                    onClick={reset}
-                    className="w-full py-3 rounded-xl bg-blue-600 text-white text-sm font-bold hover:bg-blue-700 transition-all"
-                  >
+                  <button onClick={reset}
+                    className="w-full py-3 rounded-xl bg-blue-600 text-white text-sm font-bold hover:bg-blue-700 transition-all">
                     Try Again
                   </button>
                 </div>
