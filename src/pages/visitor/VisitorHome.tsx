@@ -209,7 +209,7 @@ export default function VisitorHome() {
       setVisitorId(visitor.id);
       setFirstName(visitor.full_name.split(' ')[0]);
 
-      // Step 2: SMART TOGGLE - Check for open session
+      // Step 2: PURE TOGGLE - Check for open session
       const { data: openLog } = await supabase
         .from('visit_logs')
         .select('id, time_in, purpose')
@@ -220,12 +220,13 @@ export default function VisitorHome() {
         .maybeSingle();
 
       if (openLog) {
-        // Has active session - TIME OUT
+        // Has active session - TIME OUT (like RFID tap out)
         await doTimeOut(openLog.id, openLog.time_in, visitor.full_name.split(' ')[0]);
-        return;
+        return; // CRITICAL: Exit immediately - don't show purpose picker
       }
       
-      // No active session - TIME IN
+      // No active session - TIME IN (like RFID tap in)
+      // Show purpose picker
       setPhase('select-purpose');
     } catch (e: unknown) {
       console.error('Smart toggle error:', e);
