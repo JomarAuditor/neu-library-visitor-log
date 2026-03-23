@@ -82,37 +82,18 @@ export default function RegisterPage() {
         }
       }
 
-      // Time-In immediately
+      // Time-In immediately using atomic RPC function
       const now = new Date().toISOString();
       
-      // SMART TOGGLE: Close existing session before creating new one
-      const { data: existingOpen } = await supabase
-        .from('visit_logs')
-        .select('id, time_in')
-        .eq('visitor_id', vid)
-        .is('time_out', null)
-        .maybeSingle();
-
-      if (existingOpen) {
-        const dur = calcDurationMinutes(existingOpen.time_in, now);
-        await supabase
-          .from('visit_logs')
-          .update({ time_out: now, duration_minutes: dur })
-          .eq('id', existingOpen.id);
-      }
-      
-      const { error: logError } = await supabase.from('visit_logs').insert({
-        visitor_id: vid, purpose, time_in: now, visit_date: now.split('T')[0],
+      const { error: logError } = await supabase.rpc('smart_time_in', {
+        p_visitor_id: vid,
+        p_purpose: purpose,
+        p_time_in: now,
+        p_visit_date: now.split('T')[0],
       });
 
       if (logError) {
         console.error('Registration time in error:', logError);
-        // If constraint error, show SQL command
-        if (logError.code === '23505' || logError.message.includes('duplicate') || logError.message.includes('unique')) {
-          setError('Database constraint active. Run in Supabase: DROP INDEX IF EXISTS idx_one_active_session_per_visitor CASCADE;');
-          setLoading(false);
-          return;
-        }
         throw logError;
       }
 

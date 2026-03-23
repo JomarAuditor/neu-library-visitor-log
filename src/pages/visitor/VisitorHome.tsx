@@ -239,40 +239,16 @@ export default function VisitorHome() {
     try {
       const now = new Date().toISOString();
       
-      // FINAL CHECK: Close any existing session before creating new one
-      const { data: existingOpen } = await supabase
-        .from('visit_logs')
-        .select('id, time_in')
-        .eq('visitor_id', visitorId)
-        .is('time_out', null)
-        .maybeSingle();
-
-      if (existingOpen) {
-        // Close it first
-        const dur = calcDurationMinutes(existingOpen.time_in, now);
-        await supabase
-          .from('visit_logs')
-          .update({ time_out: now, duration_minutes: dur })
-          .eq('id', existingOpen.id);
-      }
-      
-      // Insert new session
-      const { error } = await supabase.from('visit_logs').insert({
-        visitor_id: visitorId,
-        purpose: pid,
-        time_in: now,
-        visit_date: now.split('T')[0],
+      // ATOMIC SOLUTION: Use RPC function to close all + insert in single transaction
+      const { error } = await supabase.rpc('smart_time_in', {
+        p_visitor_id: visitorId,
+        p_purpose: pid,
+        p_time_in: now,
+        p_visit_date: now.split('T')[0],
       });
       
       if (error) {
-        console.error('Insert error:', error);
-        // If STILL getting constraint error, the database constraint is active
-        if (error.code === '23505' || error.message.includes('duplicate') || error.message.includes('unique')) {
-          setErrMsg('Please run this SQL in Supabase: DROP INDEX IF EXISTS idx_one_active_session_per_visitor CASCADE;');
-          setPhase('error');
-          await signOut();
-          return;
-        }
+        console.error('Smart time in error:', error);
         throw error;
       }
 
