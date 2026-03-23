@@ -209,8 +209,8 @@ export default function VisitorHome() {
       setVisitorId(visitor.id);
       setFirstName(visitor.full_name.split(' ')[0]);
 
-      // Step 2: SMART TOGGLE - Check for open session and handle it
-      const { data: openLog, error: logError } = await supabase
+      // Step 2: SMART TOGGLE - Check for open session
+      const { data: openLog } = await supabase
         .from('visit_logs')
         .select('id, time_in, purpose')
         .eq('visitor_id', visitor.id)
@@ -219,17 +219,16 @@ export default function VisitorHome() {
         .limit(1)
         .maybeSingle();
 
-      if (logError) throw logError;
-
       if (openLog) {
-        // User has an active session - TIME OUT automatically
+        // Has active session - TIME OUT
         await doTimeOut(openLog.id, openLog.time_in, visitor.full_name.split(' ')[0]);
         return;
       }
       
-      // No active session - Allow TIME IN immediately
+      // No active session - TIME IN
       setPhase('select-purpose');
     } catch (e: unknown) {
+      console.error('Smart toggle error:', e);
       setErrMsg((e as Error)?.message ?? 'Something went wrong. Please try again.');
       setPhase('error');
     }
@@ -240,7 +239,7 @@ export default function VisitorHome() {
     try {
       const now = new Date().toISOString();
       
-      // CRITICAL: Close ANY existing open session first
+      // FINAL CHECK: Close any existing session before creating new one
       const { data: existingOpen } = await supabase
         .from('visit_logs')
         .select('id, time_in')
@@ -249,18 +248,15 @@ export default function VisitorHome() {
         .maybeSingle();
 
       if (existingOpen) {
+        // Close it first
         const dur = calcDurationMinutes(existingOpen.time_in, now);
-        const { error: updateError } = await supabase
+        await supabase
           .from('visit_logs')
           .update({ time_out: now, duration_minutes: dur })
           .eq('id', existingOpen.id);
-        
-        if (updateError) {
-          console.error('Error closing session:', updateError);
-        }
       }
       
-      // Try to insert new session
+      // Insert new session
       const { error } = await supabase.from('visit_logs').insert({
         visitor_id: visitorId,
         purpose: pid,
@@ -269,35 +265,15 @@ export default function VisitorHome() {
       });
       
       if (error) {
-        // If duplicate error, try one more time after closing all sessions
-        if (error.message.includes('duplicate') || error.message.includes('unique')) {
-          // Force close ALL sessions for this visitor
-          await supabase
-            .from('visit_logs')
-            .update({ 
-              time_out: now, 
-              duration_minutes: 0 
-            })
-            .eq('visitor_id', visitorId)
-            .is('time_out', null);
-          
-          // Try insert again
-          const { error: retryError } = await supabase.from('visit_logs').insert({
-            visitor_id: visitorId,
-            purpose: pid,
-            time_in: now,
-            visit_date: now.split('T')[0],
-          });
-          
-          if (retryError) {
-            setErrMsg('Database constraint active. Please contact admin to remove the constraint.');
-            setPhase('error');
-            await signOut();
-            return;
-          }
-        } else {
-          throw error;
+        console.error('Insert error:', error);
+        // If STILL getting constraint error, the database constraint is active
+        if (error.code === '23505' || error.message.includes('duplicate') || error.message.includes('unique')) {
+          setErrMsg('Please run this SQL in Supabase: DROP INDEX IF EXISTS idx_one_active_session_per_visitor CASCADE;');
+          setPhase('error');
+          await signOut();
+          return;
         }
+        throw error;
       }
 
       // Time string in PHT

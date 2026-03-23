@@ -85,7 +85,7 @@ export default function RegisterPage() {
       // Time-In immediately
       const now = new Date().toISOString();
       
-      // SMART TOGGLE: Check for existing active session before time in
+      // SMART TOGGLE: Close existing session before creating new one
       const { data: existingOpen } = await supabase
         .from('visit_logs')
         .select('id, time_in')
@@ -94,7 +94,6 @@ export default function RegisterPage() {
         .maybeSingle();
 
       if (existingOpen) {
-        // Already has active session - close it first, then create new one
         const dur = calcDurationMinutes(existingOpen.time_in, now);
         await supabase
           .from('visit_logs')
@@ -107,23 +106,14 @@ export default function RegisterPage() {
       });
 
       if (logError) {
-        // If duplicate error, force close all sessions and retry
-        if (logError.message.includes('duplicate') || logError.message.includes('unique')) {
-          await supabase
-            .from('visit_logs')
-            .update({ time_out: now, duration_minutes: 0 })
-            .eq('visitor_id', vid)
-            .is('time_out', null);
-          
-          // Retry insert
-          const { error: retryError } = await supabase.from('visit_logs').insert({
-            visitor_id: vid, purpose, time_in: now, visit_date: now.split('T')[0],
-          });
-          
-          if (retryError) throw retryError;
-        } else {
-          throw logError;
+        console.error('Registration time in error:', logError);
+        // If constraint error, show SQL command
+        if (logError.code === '23505' || logError.message.includes('duplicate') || logError.message.includes('unique')) {
+          setError('Database constraint active. Run in Supabase: DROP INDEX IF EXISTS idx_one_active_session_per_visitor CASCADE;');
+          setLoading(false);
+          return;
         }
+        throw logError;
       }
 
       // Get time string for success page
