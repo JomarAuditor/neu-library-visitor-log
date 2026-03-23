@@ -205,11 +205,12 @@ export default function VisitorHome() {
 
       if (sessErr) throw sessErr;
 
-      // DEBUG: Log what we found
-      console.log('[DEBUG] Open sessions found:', openSessions?.length || 0);
-      if (openSessions && openSessions.length > 0) {
-        console.log('[DEBUG] Session IDs:', openSessions.map(s => s.id));
-      }
+      // DEBUG: Log EVERYTHING
+      console.log('[DEBUG] openSessions:', openSessions);
+      console.log('[DEBUG] openSessions type:', typeof openSessions);
+      console.log('[DEBUG] openSessions is array?', Array.isArray(openSessions));
+      console.log('[DEBUG] openSessions length:', openSessions?.length);
+      console.log('[DEBUG] Condition check:', openSessions && openSessions.length > 0);
 
       // ═══════════════════════════════════════════════════════════
       // BRANCH A: USER IS INSIDE → TIME OUT
