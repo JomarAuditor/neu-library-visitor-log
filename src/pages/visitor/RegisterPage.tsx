@@ -118,7 +118,16 @@ export default function RegisterPage() {
       });
       if (logErr) throw logErr;
 
-      navigate(`/?registered=1&name=${encodeURIComponent(fullName.trim())}`, { replace: true });
+      // Navigate to success page showing "Welcome to the Library!"
+      const timeStr = new Date().toLocaleTimeString('en-PH', { 
+        hour: '2-digit', minute: '2-digit', hour12: true 
+      });
+      
+      await signOut();
+      navigate(
+        `/success?action=in&name=${encodeURIComponent(fullName.trim().split(' ')[0])}&time=${encodeURIComponent(timeStr)}`,
+        { replace: true }
+      );
     } catch (e: unknown) {
       setError((e as Error)?.message ?? 'Registration failed. Please try again.');
     } finally {
